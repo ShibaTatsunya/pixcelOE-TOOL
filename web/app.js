@@ -13,14 +13,14 @@ function $$(s) { return Array.from(document.querySelectorAll(s)); }
 const PRESETS = {
   character: {
     posterize_skip: false, desat: 'hsl', gamma: 1, brightness: 0, contrast: 0,
-    posterize_levels: 4, posterize_mode: 'ps',
+    posterize_levels: 4, color_levels: 12, posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 4, downsample: 'bridge', dark_tol: 0.06,
     palette_kind: 'character', quantize_levels: 4, no_quantize: false, dither: 'none', dither_strength: 24,
   },
   scene: {
     posterize_skip: false, desat: 'hsl', gamma: 1, brightness: 0, contrast: 0,
-    posterize_levels: 4, posterize_mode: 'ps',
+    posterize_levels: 4, color_levels: 12, posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 2, downsample: 'bridge', dark_tol: 0.06,
     palette_kind: 'scene', quantize_levels: 0, no_quantize: false, dither: 'none', dither_strength: 24,
@@ -41,11 +41,12 @@ const GROUPS = [
     ],
   },
   {
-    title: '② 灰阶分几层',
+    title: '② 分层（色彩层数 + 灰阶层数）',
     enableKey: 'enable_posterize',
     items: [
-      { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '层数越少画面越简练、越有像素感。0 = 不分层；4 层是最常用的选择。' },
-      { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认。' },
+      { k: 'color_levels', t: 'range', label: '色彩层数（色相保留档数）', min: 2, max: 64, step: 1, help: '彩色模式下生效：把色相量化到 N 档，色彩不失真又有像素艺术风。黑白模式忽略。' },
+      { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '层数越少画面越简练、越有像素感。0 = 不分层；4 层是最常用。彩色模式下作为明度档数。' },
+      { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认（仅黑白模式生效）。' },
     ],
   },
   {

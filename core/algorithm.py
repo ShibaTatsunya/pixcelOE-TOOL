@@ -299,6 +299,51 @@ def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
     return np.clip(a, 0.0, 255.0).astype(np.uint8)
 
 
+def quantize_hsl_color(arr: np.ndarray, hue_levels: int = 12, value_levels: int = 4) -> np.ndarray:
+    """彩色量化（HSL 色相 + 明度量化）：保留色相、量化色相与明度，饱和度保持。
+
+    用于彩色模式：色相量化到 ``hue_levels`` 档（色彩不失真），明度量化到
+    ``value_levels`` 档（像素艺术风的色阶）。返回 RGB uint8。
+    """
+    a = arr.astype(np.float32) / 255.0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    maxc = np.maximum(np.maximum(r, g), b)
+    minc = np.minimum(np.minimum(r, g), b)
+    l = (maxc + minc) * 0.5
+    d = np.maximum(maxc - minc, 1e-8)
+    s = np.where(l > 0.5, d / (2.0 - maxc - minc + 1e-8), d / (maxc + minc + 1e-8))
+
+    # 色相 0-1
+    h = np.zeros_like(l)
+    mask_r = maxc == r
+    mask_g = (maxc == g) & ~mask_r
+    mask_b = ~mask_r & ~mask_g
+    h = np.where(mask_r, ((g - b) / d) % 6.0, h)
+    h = np.where(mask_g, ((b - r) / d) + 2.0, h)
+    h = np.where(mask_b, ((r - g) / d) + 4.0, h)
+    h = (h / 6.0) % 1.0
+
+    # 量化：色相到 hue_levels 档、明度到 value_levels 档（取每档中心）
+    if hue_levels and hue_levels >= 2:
+        h = (np.floor(h * hue_levels) + 0.5) / hue_levels
+    if value_levels and value_levels >= 2:
+        l = np.clip((np.floor(l * value_levels) + 0.5) / value_levels, 0.0, 1.0)
+
+    # HSL -> RGB
+    h6 = h * 6.0
+    q = np.where(l < 0.5, l * (1.0 + s), l + s - l * s)
+    p = 2.0 * l - q
+
+    def _f(t):
+        t = np.mod(t, 1.0)
+        return np.where(t < 1.0 / 6.0, p + (q - p) * 6.0 * t,
+               np.where(t < 0.5, q,
+               np.where(t < 2.0 / 3.0, p + (q - p) * (2.0 / 3.0 - t) * 6.0, p)))
+
+    out = np.stack([_f(h6 + 1.0 / 3.0), _f(h6), _f(h6 - 1.0 / 3.0)], axis=2)
+    return np.clip(out * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
 def desaturate_posterize(
     arr: np.ndarray, levels: int = 0, mode: str = "ps", desat: str = "hsl",
     gamma: float = 1.0, brightness: float = 0.0, contrast: float = 0.0, palette=None,

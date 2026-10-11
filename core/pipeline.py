@@ -20,8 +20,8 @@ from typing import Any
 import numpy as np
 
 from .algorithm import (DOWNSAMPLE_MODES, adjust_color, apply_dither, contrast_downsample,
-                        desaturate_adjust, expand_only, nearest_palette, posterize_color,
-                        posterize_lum)
+                        desaturate_adjust, expand_only, nearest_palette, posterize_lum,
+                        quantize_hsl_color)
 from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
@@ -55,7 +55,8 @@ class Params:
     # ---- 色调分离 ----
     posterize_skip: bool = False       # True = 输入已是分档灰图，跳过本步（仍量化）
     color_mode: bool = False           # True = 保留彩色（跳过去饱和+分档+灰阶量化）
-    posterize_levels: int = 4          # 0 = 按调色板原样
+    color_levels: int = 12             # 彩色模式：色相保留档数
+    posterize_levels: int = 4          # 0 = 按调色板原样（彩色模式：明度档数）
     posterize_mode: str = "ps"         # ps | palette
 
     # ---- 轮廓扩展 ----
@@ -92,6 +93,7 @@ class Params:
         self.patch = max(1, min(4, int(self.patch)))
         self.thickness = max(0, min(4, int(self.thickness)))
         self.posterize_levels = max(0, min(8, int(self.posterize_levels)))
+        self.color_levels = max(2, min(64, int(self.color_levels)))
         self.quantize_levels = max(0, min(8, int(self.quantize_levels)))
         self.downsample = self.downsample if self.downsample in DOWNSAMPLE_MODES else "bridge"
         self.desat = self.desat if self.desat in ("hsl", "rec709") else "hsl"
@@ -220,9 +222,9 @@ def convert(
     # ② 灰阶分几层：色调分离 → post（uint8）
     t0 = time.perf_counter()
     if params.color_mode:
-        # 彩色模式：灰阶分几层改为「每个 RGB 通道分别分档」
+        # 彩色模式：色相量化（color_levels 档）+ 明度量化（posterize_levels 档），色彩不失真
         if params.enable_posterize:
-            post = posterize_color(post, params.posterize_levels)
+            post = quantize_hsl_color(post, params.color_levels, params.posterize_levels)
     elif not params.posterize_skip:
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
