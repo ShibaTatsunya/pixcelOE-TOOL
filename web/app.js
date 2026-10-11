@@ -169,7 +169,10 @@ function buildField(it) {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.checked = !!v;
-    cb.addEventListener('change', () => setParam(it.k, cb.checked));
+    cb.addEventListener('change', () => {
+      setParam(it.k, cb.checked);
+      if (it.k === 'color_mode') buildControls();   // ②组滑块随彩色/黑白切换
+    });
     lab.appendChild(cb);
     lab.appendChild(document.createTextNode(' ' + it.label));
     wrap.appendChild(lab);
