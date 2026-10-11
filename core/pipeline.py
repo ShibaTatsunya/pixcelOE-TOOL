@@ -19,7 +19,8 @@ from typing import Any
 
 import numpy as np
 
-from .algorithm import DOWNSAMPLE_MODES, desaturate_posterize, expand_only, pixelize_oe
+from .algorithm import (DOWNSAMPLE_MODES, apply_dither, contrast_downsample,
+                        desaturate_adjust, expand_only, nearest_palette, posterize_lum)
 from .palette import gray_rgb, load_palette, narrow_palette
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
@@ -35,6 +36,13 @@ class Params:
 
     # 预设标识（仅用于回显，不参与计算）
     preset: str = "character"
+
+    # ---- 大步骤开关（每步可单独关闭，实时看效果）----
+    enable_input: bool = True           # ① 输入与明暗
+    enable_posterize: bool = True       # ② 灰阶分几层
+    enable_outline: bool = True         # ③ 轮廓与线条
+    enable_downsample: bool = True      # ④ 像素块大小
+    enable_quantize: bool = True        # ⑤ 颜色
 
     # ---- 输入预处理 ----
     crop: list[int] | None = None      # [left, top, right, bottom]，None / 空 = 不裁
@@ -187,53 +195,73 @@ def convert(
     src, warned = plan_crop(arr, params)
     in_w, in_h = src.shape[1], src.shape[0]
 
-    # 1) 去饱和 + 色调分离（可跳过：输入本身已是分档灰图时）
+    # ① 输入与明暗：去饱和 + 亮度/对比度 → 灰度 lum（float32）
     t0 = time.perf_counter()
     if params.posterize_skip:
         post = np.ascontiguousarray(src[:, :, :3])
+        lum = src.astype(np.float32).mean(axis=2)
+    elif params.enable_input:
+        lum = desaturate_adjust(src, params.desat, params.gamma, params.brightness, params.contrast)
     else:
-        post = desaturate_posterize(
-            src,
-            levels=params.posterize_levels,
-            mode=params.posterize_mode,
-            desat=params.desat,
-            gamma=params.gamma,
-            brightness=params.brightness,
-            contrast=params.contrast,
-            palette=gray_rgb(pal, params.palette_kind),
-        )
+        lum = src.astype(np.float32).mean(axis=2)
+    timings["input"] = (time.perf_counter() - t0) * 1000
+
+    # ② 灰阶分几层：色调分离 → post（uint8）
+    t0 = time.perf_counter()
+    if not params.posterize_skip:
+        if params.enable_posterize:
+            post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
+                                 gray_rgb(pal, params.palette_kind))
+        else:
+            post = np.dstack([lum, lum, lum]).astype(np.uint8)
     timings["posterize"] = (time.perf_counter() - t0) * 1000
 
-    # 2) 轮廓扩展（昂贵，走缓存）
-    (expanded_rgb, gray), hit = cache.get_or_compute(post, params.patch, params.thickness, params.keep_thin)
-    timings["expand"] = cache.last_ms or 0.0
-
-    # 3) 降采样 + 量化
+    # ③ 轮廓与线条：轮廓扩展（跳过时直接进降采样）
     t0 = time.perf_counter()
-    pal_rgb = narrow_palette(gray_rgb(pal, params.palette_kind), params.quantize_levels)
-    final, stages = pixelize_oe(
-        post,
-        pal_rgb,
-        factor=params.factor,
-        thickness=params.thickness,
-        patch=params.patch,
-        dark_tol=params.dark_tol,
-        downsample=params.downsample,
-        keep_thin=params.keep_thin,
-        no_quantize=params.no_quantize,
-        dither=params.dither,
-        dither_strength=params.dither_strength,
-        expanded_rgb=expanded_rgb,
-    )
-    timings["downsample_quantize"] = (time.perf_counter() - t0) * 1000
+    if params.enable_outline:
+        (expanded_rgb, gray), hit = cache.get_or_compute(post, params.patch, params.thickness, params.keep_thin)
+    else:
+        expanded_rgb = post.astype(np.float32)
+        gray = post.astype(np.float32).mean(axis=2)
+        hit = False
+    timings["expand"] = (time.perf_counter() - t0) * 1000
+
+    # ④ 像素块大小：降采样（跳过时保持原尺寸）
+    t0 = time.perf_counter()
+    if params.enable_downsample:
+        h, w = expanded_rgb.shape[:2]
+        pad_h = (params.factor - h % params.factor) % params.factor
+        pad_w = (params.factor - w % params.factor) % params.factor
+        rgb_pad = expanded_rgb
+        if pad_h or pad_w:
+            rgb_pad = np.pad(expanded_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
+        small = contrast_downsample(rgb_pad.astype(np.uint8), params.factor, params.dark_tol, params.downsample)
+    else:
+        small = np.clip(expanded_rgb, 0, 255).astype(np.uint8)
+    timings["downsample"] = (time.perf_counter() - t0) * 1000
+
+    # ⑤ 颜色：抖动 + 调色板量化（跳过时保留降采样原值）
+    t0 = time.perf_counter()
+    if params.enable_quantize:
+        if params.dither != "none":
+            small = apply_dither(small, params.dither, params.dither_strength)
+        if params.no_quantize:
+            final = np.clip(small * 255.0, 0, 255).round().astype(np.uint8)
+        else:
+            pal_rgb = narrow_palette(gray_rgb(pal, params.palette_kind), params.quantize_levels)
+            final = nearest_palette(small, list(pal_rgb))
+    else:
+        final = small.copy()
+    timings["quantize"] = (time.perf_counter() - t0) * 1000
     timings["total"] = (time.perf_counter() - t_all) * 1000
 
     return RenderResult(
         final=final,
         stages={
+            "input": np.dstack([lum, lum, lum]).astype(np.uint8),
             "posterized": post,
             "expanded": np.clip(expanded_rgb, 0, 255).astype(np.uint8),
-            "downsampled": stages["downsampled"],
+            "downsampled": small,
             "final": final,
         },
         timings=timings,

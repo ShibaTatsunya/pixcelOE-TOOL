@@ -142,8 +142,9 @@ def main() -> int:
         # 控件与分组
         n_ctl = len(re.findall(r'class="field"', dom))
         check(n_ctl >= 12, f"参数控件渲染出 {n_ctl} 个（预期 >= 12）")
-        groups = re.findall(r'<h3>([^<]+)</h3>', dom)
-        check(len(groups) >= 5, f"参数分组渲染出 {len(groups)} 组：{'、'.join(groups)}")
+        titles = ['① 输入与明暗', '② 灰阶分几层', '③ 轮廓与线条', '④ 像素块大小', '⑤ 颜色']
+        missing = [t for t in titles if t not in dom]
+        check(not missing, f"参数分组渲染出 {len(titles) - len(missing)}/{len(titles)} 组", '缺失：' + ','.join(missing))
 
         # 关键元素
         for eid in ("view-mode", "zoom", "preset", "drop-hint", "canvas-wrap",

@@ -231,25 +231,12 @@ def apply_dither(img: np.ndarray, pattern: str, strength: float) -> np.ndarray:
 # --------------------------------------------------------------------------
 # 两个阶段入口
 # --------------------------------------------------------------------------
-def desaturate_posterize(
-    arr: np.ndarray,
-    levels: int = 0,
-    mode: str = "ps",
-    desat: str = "hsl",
-    gamma: float = 1.0,
-    brightness: float = 0.0,
-    contrast: float = 0.0,
-    palette=None,
-) -> np.ndarray:
-    """去饱和 + 色调分离，返回同尺寸的 RGB（三通道等值的灰图）。
+def desaturate_adjust(arr: np.ndarray, desat: str = "hsl", gamma: float = 1.0,
+                      brightness: float = 0.0, contrast: float = 0.0) -> np.ndarray:
+    """① 输入与明暗：去饱和 + 明暗调整，返回灰度 ``lum``（float32，0-255）。
 
-    去饱和（``desat``）：
-      * ``hsl``（默认）—— 对齐 PS「色相/饱和度」把饱和度设为 −100：``L=(max+min)/2``。
-        用 Rec.709 加权会对偏暖皮肤暗 4~8 个亮度，正好把脸压在 4 档分界线之下、整张脸落进灰档。
-      * ``rec709`` —— ``0.2126R + 0.7152G + 0.0722B``（旧行为）。
-
-    亮度/对比度（``brightness`` / ``contrast``）：对齐 PS 的「亮度/对比度」调整层，
-    对比度用经典公式 ``k=(259*(C+255))/(255*(259-C))``、围绕中灰 128 缩放。
+    去饱和（``desat``）：``hsl`` = (max+min)/2（对齐 PS 饱和度 −100）；``rec709`` = 加权平均。
+    亮度/对比度：对比度用经典公式 ``k=(259*(C+255))/(255*(259-C))`` 围绕中灰 128 缩放。
     """
     a = arr.astype(np.float32)
     if desat == "hsl":
@@ -263,20 +250,31 @@ def desaturate_posterize(
     if contrast:
         k = (259.0 * (contrast + 255.0)) / (255.0 * (259.0 - contrast))
         lum = k * (lum - 128.0) + 128.0
-    lum = np.clip(lum, 0.0, 255.0)
+    return np.clip(lum, 0.0, 255.0)
 
+
+def posterize_lum(lum: np.ndarray, levels: int = 0, mode: str = "ps", palette=None) -> np.ndarray:
+    """② 灰阶分几层：把灰度 ``lum``（float32 0-255）分档，返回 RGB（三通道等值）uint8。
+
+    PS 模式（``mode="ps"``）用 floor 分档：``idx = floor(lum*levels/256)``，4 档边界 64/128/192。
+    """
     steps = np.array(posterize_steps(levels, mode, palette), dtype=np.float32)
     if mode == "ps" and levels and levels >= 2:
-        # PS「色调分离」的真实分档是 floor，不是「取最近档」：
-        #     out = floor(in * levels / 256) * 255 / (levels - 1)
-        # 4 档时边界在 64 / 128 / 192；「取最近档」的边界是 42.5 / 127.5 / 212.5。
-        # 后者会把 42.5~64 判成中灰（PS 判黑）、192~212.5 判成浅灰（PS 判白）。
         idx = np.floor(lum.astype(np.float32) * float(levels) / 256.0).astype(np.int32)
         idx = np.clip(idx, 0, len(steps) - 1)
     else:
         idx = np.abs(lum[:, :, None] - steps[None, None, :]).argmin(axis=2)
     gray = steps[idx].astype(np.uint8)
     return np.dstack([gray, gray, gray])
+
+
+def desaturate_posterize(
+    arr: np.ndarray, levels: int = 0, mode: str = "ps", desat: str = "hsl",
+    gamma: float = 1.0, brightness: float = 0.0, contrast: float = 0.0, palette=None,
+) -> np.ndarray:
+    """兼容包装：去饱和 + 色调分离（= :func:`desaturate_adjust` + :func:`posterize_lum`）。"""
+    lum = desaturate_adjust(arr, desat, gamma, brightness, contrast)
+    return posterize_lum(lum, levels, mode, palette)
 
 
 def pixelize_oe(

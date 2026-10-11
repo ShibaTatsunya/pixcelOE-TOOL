@@ -149,6 +149,14 @@ def main() -> int:
         diff = int((np.abs(a_d.astype(int) - a_n.astype(int)).max(axis=2) > 0).sum())
         check(diff > 0, f"抖动 bayer4 改变了输出（{diff} 像素不同）", str(diff))
 
+        # 5d) 大步骤开关：关闭「轮廓与线条」后输出变化（证明开关生效）
+        with post_json("/api/render", {"id": iid, "params": {"enable_outline": False,
+                "factor": 4, "posterize_skip": True, "palette_kind": "character", "quantize_levels": 4}}) as r:
+            png_off = r.read()
+        a_off = np.asarray(Image.open(io.BytesIO(png_off)).convert("RGB"))
+        diff_off = int((np.abs(a_off.astype(int) - a_n.astype(int)).max(axis=2) > 0).sum())
+        check(diff_off > 0, f"关闭「轮廓与线条」后输出变化（{diff_off} 像素不同）", str(diff_off))
+
         # 6) 报告（应命中渲染缓存，第二次很快）
         t0 = time.time()
         with post_json("/api/report", {"id": iid, "params": params}) as r:

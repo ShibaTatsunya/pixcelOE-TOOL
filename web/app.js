@@ -31,6 +31,7 @@ const PRESETS = {
 const GROUPS = [
   {
     title: '① 输入与明暗',
+    enableKey: 'enable_input',
     items: [
       { k: 'posterize_skip', t: 'bool', label: '输入已经是灰阶图', help: '勾选后跳过黑白化，直接把图当灰阶继续处理。' },
       { k: 'desat', t: 'select', label: '黑白化算法', opts: [['hsl', 'HSL —— 和 PS 一致（推荐）'], ['rec709', 'Rec.709 —— 旧做法，脸会更暗']], help: '决定彩色图怎么变黑白。「HSL」跟 Photoshop 把饱和度拉到底的结果一致。' },
@@ -41,6 +42,7 @@ const GROUPS = [
   },
   {
     title: '② 灰阶分几层',
+    enableKey: 'enable_posterize',
     items: [
       { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '层数越少画面越简练、越有像素感。0 = 不分层；4 层是最常用的选择。' },
       { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认。' },
@@ -48,6 +50,7 @@ const GROUPS = [
   },
   {
     title: '③ 轮廓与线条',
+    enableKey: 'enable_outline',
     items: [
       { k: 'patch', t: 'range', label: '细节敏感度', min: 1, max: 4, step: 1, help: '调大 → 线条更平滑、忽略细小噪点；调小 → 保留更多细节，但可能带出噪点。' },
       { k: 'thickness', t: 'range', label: '线条粗细', min: 0, max: 4, step: 1, help: '调大 → 轮廓更粗更实；0 = 不做轮廓处理。' },
@@ -56,6 +59,7 @@ const GROUPS = [
   },
   {
     title: '④ 像素块大小',
+    enableKey: 'enable_downsample',
     items: [
       { k: 'factor', t: 'range', label: '缩小倍数（像素块粗细）', min: 1, max: 16, step: 1, help: '越大像素块越粗、成品越小。640×960 用 4 就得到 160×240。任意值都能用，无需尺寸整除。' },
       { k: 'downsample', t: 'select', label: '像素块取值方式', opts: '#downsample' },
@@ -64,6 +68,7 @@ const GROUPS = [
   },
   {
     title: '⑤ 颜色',
+    enableKey: 'enable_quantize',
     items: [
       { k: 'quantize_levels', t: 'range', label: '颜色数（量化档数）', min: 0, max: 8, step: 1, help: '0 = 用整套灰阶；改成 4 表示只在调色板里取 4 档，颜色更少、更统一。' },
       { k: 'no_quantize', t: 'bool', label: '不强制套调色板', help: '保留缩小后的原始颜色（一般不需要勾，勾了颜色会乱）。' },
@@ -121,9 +126,22 @@ function buildControls() {
   for (const g of GROUPS) {
     const sec = document.createElement('div');
     sec.className = 'group';
-    const h = document.createElement('h3');
-    h.textContent = g.title;
-    sec.appendChild(h);
+    const on = state.params[g.enableKey] !== false;
+    const label = document.createElement('label');
+    label.className = 'step-toggle';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = on;
+    cb.addEventListener('change', () => {
+      setParam(g.enableKey, cb.checked);
+      sec.classList.toggle('off', !cb.checked);
+    });
+    label.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = g.title;
+    label.appendChild(span);
+    sec.appendChild(label);
+    sec.classList.toggle('off', !on);
     for (const it of g.items) sec.appendChild(buildField(it));
     host.appendChild(sec);
   }

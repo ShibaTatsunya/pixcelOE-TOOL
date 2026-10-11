@@ -69,10 +69,10 @@ code{background:#0e1015; padding:1px 5px; border-radius:4px; color:#b9c2d6; font
 .controls{padding:6px 0}
 .group{border-bottom:1px solid #232833; padding:10px 15px 14px}
 .group:last-child{border-bottom:none}
-.group h3{
-  margin:0 0 10px; font-size:11.5px; font-weight:600; letter-spacing:.7px;
-  text-transform:uppercase; color:var(--accent2);
-}
+.step-toggle{display:flex; align-items:center; gap:8px; margin:0 0 10px; cursor:pointer; user-select:none}
+.step-toggle input{accent-color:var(--accent); width:14px; height:14px; flex:0 0 auto}
+.step-toggle span{font-size:11.5px; font-weight:600; letter-spacing:.7px; text-transform:uppercase; color:var(--accent2)}
+.group.off .field{opacity:.35; pointer-events:none}
 .field{margin-bottom:11px}
 .field:last-child{margin-bottom:0}
 .field-top{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:5px}
