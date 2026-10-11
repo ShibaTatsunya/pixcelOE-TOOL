@@ -268,6 +268,37 @@ def posterize_lum(lum: np.ndarray, levels: int = 0, mode: str = "ps", palette=No
     return np.dstack([gray, gray, gray])
 
 
+def adjust_color(arr: np.ndarray, gamma: float = 1.0, brightness: float = 0.0,
+                 contrast: float = 0.0) -> np.ndarray:
+    """彩色图的明暗调整（gamma/brightness/contrast），保持色相不变。
+
+    以 HSL 亮度 ``(max+min)/2`` 为基准做明暗调整，再按比例缩放 RGB，不改变色相。
+    """
+    a = arr.astype(np.float32)
+    lum0 = (a.max(axis=2) + a.min(axis=2)) * 0.5
+    lum = lum0.copy()
+    if gamma != 1.0:
+        lum = 255.0 * (lum / 255.0) ** gamma
+    if brightness:
+        lum = lum + brightness
+    if contrast:
+        k = (259.0 * (contrast + 255.0)) / (255.0 * (259.0 - contrast))
+        lum = k * (lum - 128.0) + 128.0
+    lum = np.clip(lum, 0.0, 255.0)
+    ratio = np.where(lum0 > 0, lum / np.maximum(lum0, 1e-6), 1.0)
+    return np.clip(a * ratio[:, :, None], 0.0, 255.0).astype(np.uint8)
+
+
+def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
+    """彩色分档：对每个 RGB 通道分别做 PS 式 floor 分档。"""
+    a = arr.astype(np.float32)
+    if levels and levels >= 2:
+        idx = np.floor(a * float(levels) / 256.0).astype(np.int32)
+        idx = np.clip(idx, 0, levels - 1)
+        a = idx * 255.0 / float(levels - 1)
+    return np.clip(a, 0.0, 255.0).astype(np.uint8)
+
+
 def desaturate_posterize(
     arr: np.ndarray, levels: int = 0, mode: str = "ps", desat: str = "hsl",
     gamma: float = 1.0, brightness: float = 0.0, contrast: float = 0.0, palette=None,

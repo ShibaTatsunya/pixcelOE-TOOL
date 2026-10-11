@@ -19,8 +19,9 @@ from typing import Any
 
 import numpy as np
 
-from .algorithm import (DOWNSAMPLE_MODES, apply_dither, contrast_downsample,
-                        desaturate_adjust, expand_only, nearest_palette, posterize_lum)
+from .algorithm import (DOWNSAMPLE_MODES, adjust_color, apply_dither, contrast_downsample,
+                        desaturate_adjust, expand_only, nearest_palette, posterize_color,
+                        posterize_lum)
 from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
@@ -198,7 +199,14 @@ def convert(
 
     # ① 输入与明暗：去饱和 + 亮度/对比度 → 灰度 lum（float32）
     t0 = time.perf_counter()
-    if params.posterize_skip or params.color_mode:
+    if params.color_mode:
+        # 彩色模式：不做去饱和，但明暗调整（gamma/brightness/contrast）照常生效，保持色相
+        if params.enable_input:
+            post = adjust_color(src, params.gamma, params.brightness, params.contrast)
+        else:
+            post = np.ascontiguousarray(src[:, :, :3])
+        lum = post.astype(np.float32).mean(axis=2)
+    elif params.posterize_skip:
         post = np.ascontiguousarray(src[:, :, :3])
         lum = src.astype(np.float32).mean(axis=2)
     elif params.enable_input:
@@ -211,7 +219,11 @@ def convert(
 
     # ② 灰阶分几层：色调分离 → post（uint8）
     t0 = time.perf_counter()
-    if not (params.posterize_skip or params.color_mode):
+    if params.color_mode:
+        # 彩色模式：灰阶分几层改为「每个 RGB 通道分别分档」
+        if params.enable_posterize:
+            post = posterize_color(post, params.posterize_levels)
+    elif not params.posterize_skip:
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
                                  gray_rgb(pal, params.palette_kind))
