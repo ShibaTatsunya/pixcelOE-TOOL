@@ -224,8 +224,7 @@ def convert(
     if params.color_mode:
         # 彩色模式：色相量化（color_levels 档）+ 明度量化（posterize_levels 档），色彩不失真
         if params.enable_posterize:
-            post = quantize_color(post, params.color_levels, params.posterize_levels,
-                                  params.dither, params.dither_strength)
+            post = quantize_color(post, params.color_levels, params.posterize_levels)
     elif not params.posterize_skip:
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
@@ -265,7 +264,10 @@ def convert(
     # ⑤ 颜色：抖动 + 调色板量化（color_mode 保留彩色；posterize_skip 输入灰图仍量化）
     t0 = time.perf_counter()
     if params.color_mode:
-        final = small.copy()
+        # 彩色：LAB 亮度量化 + 抖动（量化前叠加 Bayer，与黑白口径一致）
+        small = quantize_color(small, params.color_levels, params.posterize_levels,
+                               params.dither, params.dither_strength)
+        final = small
     elif params.enable_quantize or params.posterize_skip:
         if params.dither != "none":
             small = apply_dither(small, params.dither, params.dither_strength)

@@ -299,68 +299,92 @@ def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
     return np.clip(a, 0.0, 255.0).astype(np.uint8)
 
 
+def _srgb_to_linear(c):
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _linear_to_srgb(c):
+    return np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.maximum(c, 0.0) ** (1.0 / 2.4) - 0.055)
+
+
+def rgb_to_lab(arr: np.ndarray) -> np.ndarray:
+    """RGB uint8(0-255) -> LAB（L 0-100，A/B 约 -128..127），D65 白点。"""
+    a = arr.astype(np.float32) / 255.0
+    r = _srgb_to_linear(a[..., 0])
+    g = _srgb_to_linear(a[..., 1])
+    b = _srgb_to_linear(a[..., 2])
+    x = 0.412453 * r + 0.357580 * g + 0.180423 * b
+    y = 0.212671 * r + 0.715160 * g + 0.072169 * b
+    z = 0.019334 * r + 0.119193 * g + 0.950227 * b
+    xn, yn, zn = 0.95047, 1.0, 1.08883
+
+    def _f(t):
+        d = 6.0 / 29.0
+        return np.where(t > d ** 3, np.cbrt(t), t / (3.0 * d ** 2) + 4.0 / 29.0)
+
+    fx, fy, fz = _f(x / xn), _f(y / yn), _f(z / zn)
+    L = 116.0 * fy - 16.0
+    A = 500.0 * (fx - fy)
+    B = 200.0 * (fy - fz)
+    return np.stack([L, A, B], axis=2)
+
+
+def lab_to_rgb(lab: np.ndarray) -> np.ndarray:
+    """LAB -> RGB uint8(0-255)，D65 白点。"""
+    L = lab[..., 0]
+    A = lab[..., 1]
+    B = lab[..., 2]
+    xn, yn, zn = 0.95047, 1.0, 1.08883
+    fy = (L + 16.0) / 116.0
+    fx = fy + A / 500.0
+    fz = fy - B / 200.0
+
+    def _finv(t):
+        d = 6.0 / 29.0
+        return np.where(t > d, t ** 3, 3.0 * d ** 2 * (t - 4.0 / 29.0))
+
+    x = xn * _finv(fx)
+    y = yn * _finv(fy)
+    z = zn * _finv(fz)
+    r = 3.240479 * x - 1.537150 * y - 0.498535 * z
+    g = -0.969256 * x + 1.875992 * y + 0.041556 * z
+    b = 0.055648 * x - 0.204043 * y + 1.057311 * z
+    rgb = np.stack([_linear_to_srgb(r), _linear_to_srgb(g), _linear_to_srgb(b)], axis=2)
+    return np.clip(rgb * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
 def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4,
                    dither: str = "none", dither_strength: float = 24.0) -> np.ndarray:
-    """HSV 明度量化（色相不变）：减少各色相的明度色阶，色彩不失真。
+    """LAB 亮度量化（色相不变）+ 可选抖动：LAB 空间分离亮度 L 与颜色 A/B。
 
-    色相与饱和度完全保留；明度 V 按饱和度分档量化——
-    彩色像素（饱和度 >= 0.1）量化到 ``color_value_levels`` 档，
-    灰色像素（饱和度 < 0.1）量化到 ``gray_value_levels`` 档。
-    用 HSV（饱和度 = (max-min)/max）而非 HSL，避免高明度下近白颜色被误判为高饱和、
-    进而把白色/淡色放大成饱和色。返回 RGB uint8。
+    与竞品 PixelOE 一致的思路：亮度（L）与颜色（A/B）分开处理。
+    L（感知亮度）量化到 N 档——彩色像素（色度 sqrt(A²+B²) >= 5）用 ``color_value_levels``，
+    灰色像素用 ``gray_value_levels``；A/B 完全保留（色相不变）。可选：量化前给 L 叠加
+    Bayer 抖动。与黑白灰阶的「感知亮度」口径一致，因此彩色/黑白明度分层与抖动对齐。
+    返回 RGB uint8。
     """
-    a = arr.astype(np.float32) / 255.0
-    r, g, b = a[..., 0], a[..., 1], a[..., 2]
-    maxc = np.maximum(np.maximum(r, g), b)
-    minc = np.minimum(np.minimum(r, g), b)
-    v = maxc
-    d = np.maximum(maxc - minc, 1e-8)
-    s = np.where(maxc > 1e-8, d / np.maximum(maxc, 1e-8), 0.0)
+    lab = rgb_to_lab(arr)
+    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
+    chroma = np.sqrt(A * A + B * B)
 
-    # 色相 0-1（完全保留，不量化）
-    h = np.zeros_like(v)
-    mask_r = maxc == r
-    mask_g = (maxc == g) & ~mask_r
-    mask_b = ~mask_r & ~mask_g
-    h = np.where(mask_r, ((g - b) / d) % 6.0, h)
-    h = np.where(mask_g, ((b - r) / d) + 2.0, h)
-    h = np.where(mask_b, ((r - g) / d) + 4.0, h)
-    h = (h / 6.0) % 1.0
-
-    # 抖动：量化前给明度 V 叠加 Bayer 图案（彩色模式也能用抖动模拟中间明度）
+    # 抖动：量化前给 L 叠加 Bayer 图案（与黑白 apply_dither 的偏移口径一致）
     if dither in BAYER:
         m = BAYER[dither]
         m = m / m.size - 0.5
         th, tw = m.shape
-        hh, ww = v.shape
+        hh, ww = L.shape
         tile = np.tile(m, (hh // th + 1, ww // tw + 1))[:hh, :ww]
-        v = np.clip(v + tile * (dither_strength / 255.0), 0.0, 1.0)
+        L = np.clip(L + tile * (dither_strength / 255.0 * 100.0), 0.0, 100.0)
 
-    # 明度 V 量化：彩色像素 -> color_value_levels 档，灰色像素 -> gray_value_levels 档
     clv = max(2, int(color_value_levels))
     glv = max(2, int(gray_value_levels))
-    lv = np.where(s >= 0.1, clv, glv).astype(np.int32)
-    v_q = np.zeros_like(v)
+    lv = np.where(chroma >= 5.0, clv, glv).astype(np.int32)
+    Lq = np.zeros_like(L)
     for k in np.unique(lv):
         m = lv == k
-        v_q[m] = (np.floor(v[m] * k) + 0.5) / k
-    v_q = np.clip(v_q, 0.0, 1.0)
-
-    # HSV -> RGB（色相 H、饱和度 S 保留，明度用 v_q）
-    h6 = h * 6.0
-    i = np.floor(h6).astype(np.int32) % 6
-    f = h6 - np.floor(h6)
-    p = v_q * (1.0 - s)
-    q = v_q * (1.0 - f * s)
-    t = v_q * (1.0 - (1.0 - f) * s)
-    out = np.zeros_like(a)
-    for idx, (rr, gg, bb) in enumerate([(v_q, t, p), (q, v_q, p), (p, v_q, t),
-                                         (p, q, v_q), (t, p, v_q), (v_q, p, q)]):
-        m = i == idx
-        out[..., 0][m] = rr[m]
-        out[..., 1][m] = gg[m]
-        out[..., 2][m] = bb[m]
-    return np.clip(out * 255.0, 0.0, 255.0).astype(np.uint8)
+        Lq[m] = np.floor(L[m] / 100.0 * k + 0.5) / k * 100.0
+    Lq = np.clip(Lq, 0.0, 100.0)
+    return lab_to_rgb(np.stack([Lq, A, B], axis=2))
 
 
 def downsample_color(rgb: np.ndarray, factor: int, mode: str = "bridge") -> np.ndarray:
