@@ -52,7 +52,8 @@ class Params:
     contrast: float = 0.0              # PS 对比度 -50..100
 
     # ---- 色调分离 ----
-    posterize_skip: bool = False       # True = 输入已是分档灰图，跳过本步
+    posterize_skip: bool = False       # True = 输入已是分档灰图，跳过本步（仍量化）
+    color_mode: bool = False           # True = 保留彩色（跳过去饱和+分档+灰阶量化）
     posterize_levels: int = 4          # 0 = 按调色板原样
     posterize_mode: str = "ps"         # ps | palette
 
@@ -197,7 +198,7 @@ def convert(
 
     # ① 输入与明暗：去饱和 + 亮度/对比度 → 灰度 lum（float32）
     t0 = time.perf_counter()
-    if params.posterize_skip:
+    if params.posterize_skip or params.color_mode:
         post = np.ascontiguousarray(src[:, :, :3])
         lum = src.astype(np.float32).mean(axis=2)
     elif params.enable_input:
@@ -210,7 +211,7 @@ def convert(
 
     # ② 灰阶分几层：色调分离 → post（uint8）
     t0 = time.perf_counter()
-    if not params.posterize_skip:
+    if not (params.posterize_skip or params.color_mode):
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
                                  gray_rgb(pal, params.palette_kind))
@@ -242,9 +243,11 @@ def convert(
         small = np.clip(expanded_rgb, 0, 255).astype(np.uint8)
     timings["downsample"] = (time.perf_counter() - t0) * 1000
 
-    # ⑤ 颜色：抖动 + 调色板量化（跳过时保留降采样原值）
+    # ⑤ 颜色：抖动 + 调色板量化（color_mode 保留彩色；posterize_skip 输入灰图仍量化）
     t0 = time.perf_counter()
-    if params.enable_quantize:
+    if params.color_mode:
+        final = small.copy()
+    elif params.enable_quantize or params.posterize_skip:
         if params.dither != "none":
             small = apply_dither(small, params.dither, params.dither_strength)
         if params.no_quantize:
