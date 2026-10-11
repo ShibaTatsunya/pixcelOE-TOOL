@@ -299,11 +299,12 @@ def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
     return np.clip(a, 0.0, 255.0).astype(np.uint8)
 
 
-def quantize_hsl_color(arr: np.ndarray, hue_levels: int = 12, value_levels: int = 4) -> np.ndarray:
-    """彩色量化（HSL 色相 + 明度量化）：保留色相、量化色相与明度，饱和度保持。
+def quantize_hsl_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4) -> np.ndarray:
+    """HSL 明度量化（色相不变）：减少各色相的明度色阶，色彩不失真。
 
-    用于彩色模式：色相量化到 ``hue_levels`` 档（色彩不失真），明度量化到
-    ``value_levels`` 档（像素艺术风的色阶）。返回 RGB uint8。
+    色相与饱和度完全保留；明度按饱和度分档量化——
+    彩色像素（饱和度 >= 0.1）量化到 ``color_value_levels`` 档，
+    灰色像素（饱和度 < 0.1）量化到 ``gray_value_levels`` 档。返回 RGB uint8。
     """
     a = arr.astype(np.float32) / 255.0
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
@@ -313,7 +314,7 @@ def quantize_hsl_color(arr: np.ndarray, hue_levels: int = 12, value_levels: int 
     d = np.maximum(maxc - minc, 1e-8)
     s = np.where(l > 0.5, d / (2.0 - maxc - minc + 1e-8), d / (maxc + minc + 1e-8))
 
-    # 色相 0-1
+    # 色相 0-1（完全保留，不量化）
     h = np.zeros_like(l)
     mask_r = maxc == r
     mask_g = (maxc == g) & ~mask_r
@@ -323,16 +324,20 @@ def quantize_hsl_color(arr: np.ndarray, hue_levels: int = 12, value_levels: int 
     h = np.where(mask_b, ((r - g) / d) + 4.0, h)
     h = (h / 6.0) % 1.0
 
-    # 量化：色相到 hue_levels 档、明度到 value_levels 档（取每档中心）
-    if hue_levels and hue_levels >= 2:
-        h = (np.floor(h * hue_levels) + 0.5) / hue_levels
-    if value_levels and value_levels >= 2:
-        l = np.clip((np.floor(l * value_levels) + 0.5) / value_levels, 0.0, 1.0)
+    # 明度量化：彩色像素 -> color_value_levels 档，灰色像素 -> gray_value_levels 档
+    clv = max(2, int(color_value_levels))
+    glv = max(2, int(gray_value_levels))
+    lv = np.where(s >= 0.1, clv, glv).astype(np.int32)
+    l_q = np.zeros_like(l)
+    for k in np.unique(lv):
+        m = lv == k
+        l_q[m] = (np.floor(l[m] * k) + 0.5) / k
+    l_q = np.clip(l_q, 0.0, 1.0)
 
-    # HSL -> RGB
+    # HSL -> RGB（色相 H、饱和度 S 保留，明度用 l_q）
     h6 = h * 6.0
-    q = np.where(l < 0.5, l * (1.0 + s), l + s - l * s)
-    p = 2.0 * l - q
+    q = np.where(l_q < 0.5, l_q * (1.0 + s), l_q + s - l_q * s)
+    p = 2.0 * l_q - q
 
     def _f(t):
         t = np.mod(t, 1.0)
