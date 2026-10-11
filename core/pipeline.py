@@ -203,7 +203,9 @@ def convert(
     elif params.enable_input:
         lum = desaturate_adjust(src, params.desat, params.gamma, params.brightness, params.contrast)
     else:
-        lum = src.astype(np.float32).mean(axis=2)
+        # ①关闭：不做明暗调整，但仍做 HSL 去饱和。这样②分档始终拿到的是
+        # 「去饱和后的灰度」，不依赖①的开关 —— 去饱和与分档解耦。
+        lum = desaturate_adjust(src, params.desat, 1.0, 0.0, 0.0)
     timings["input"] = (time.perf_counter() - t0) * 1000
 
     # ② 灰阶分几层：色调分离 → post（uint8）

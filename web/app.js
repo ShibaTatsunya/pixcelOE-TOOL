@@ -33,7 +33,6 @@ const GROUPS = [
     title: '① 输入与明暗',
     enableKey: 'enable_input',
     items: [
-      { k: 'posterize_skip', t: 'bool', label: '输入已经是灰阶图', help: '勾选后跳过黑白化，直接把图当灰阶继续处理。' },
       { k: 'desat', t: 'select', label: '黑白化算法', opts: [['hsl', 'HSL —— 和 PS 一致（推荐）'], ['rec709', 'Rec.709 —— 旧做法，脸会更暗']], help: '决定彩色图怎么变黑白。「HSL」跟 Photoshop 把饱和度拉到底的结果一致。' },
       { k: 'gamma', t: 'range', label: '明暗曲线（Gamma）', min: 0.2, max: 3, step: 0.05, help: '调大 → 整体变暗；调小 → 整体变亮。' },
       { k: 'brightness', t: 'range', label: '整体亮度', min: -150, max: 150, step: 1, help: '正数更亮、负数更暗，等价于 Photoshop 的「亮度」。' },
