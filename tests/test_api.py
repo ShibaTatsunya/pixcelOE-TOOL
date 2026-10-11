@@ -144,14 +144,18 @@ def main() -> int:
         check(rep.get("output_size") == [160, 240], "报告输出尺寸 160x240", str(rep.get("output_size")))
         check(dt < 3000, f"报告命中缓存（{dt:.0f} ms）", f"{dt:.0f} ms")
 
-        # 7) 导出
-        with post_json("/api/export", {"id": iid, "params": params, "name": "_api_test"}) as r:
+        # 7) 导出（含放大倍数）
+        with post_json("/api/export", {"id": iid, "params": params, "name": "_api_test", "scale": 4}) as r:
             ex = json.loads(r.read().decode("utf-8"))
         png_p, meta_p = Path(ex["png"]), Path(ex["meta"])
         check(png_p.exists() and meta_p.exists(), "导出 PNG + JSON 元数据", str(ex))
         if png_p.exists():
             m = json.loads(meta_p.read_text(encoding="utf-8"))
             check(m.get("params", {}).get("factor") == 4, "元数据记录了完整参数")
+            check(m.get("scale") == 4, "元数据记录了放大倍数", str(m.get("scale")))
+            from PIL import Image
+            with Image.open(png_p) as im:
+                check(im.size == (640, 960), f"scale=4 导出图 640x960（原 160x240）", str(im.size))
             png_p.unlink()
             meta_p.unlink()
 

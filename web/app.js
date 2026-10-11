@@ -398,10 +398,13 @@ async function doExport() {
   try {
     const name = prompt('导出文件名（不含扩展名）：', `pixel_${Date.now()}`);
     if (name == null) return;   // 用户取消
+    const scaleRaw = prompt('放大倍数（1/2/4/8，默认 4）：', '4');
+    const scale = Math.max(1, Math.min(8, parseInt(scaleRaw, 10) || 4));
     const j = await api('/api/export', {
       id: state.id,
       params: state.params,
       name,
+      scale,
     });
     toast(j.pass ? '已保存（验收通过）：' + j.png : '已保存（验收未通过）：' + j.png, j.pass);
   } catch (e) {
@@ -436,12 +439,10 @@ function bind() {
   });
 
   $('#preset').addEventListener('change', (e) => {
-    const key = e.target.value;
-    if (key === 'custom') return;
-    state.params = { ...PRESETS[key] };
-    buildControls();
-    scheduleRender();
+    applyPreset(e.target.value);
   });
+
+  $('#btn-save-preset').addEventListener('click', saveCurrentPreset);
 
   $('#btn-reset').addEventListener('click', () => {
     $('#preset').value = 'character';
@@ -528,7 +529,57 @@ async function init() {
     state.meta = null;
   }
   // 调色板里的画布建议值
+  refreshPresetSelect();
   buildControls();
 }
 
 init();
+
+/* ---------------- 自定义预设（localStorage，纯前端） ---------------- */
+const CUSTOM_PRESETS_KEY = 'pixceloe_presets_v1';
+
+function loadCustomPresets() {
+  try { return JSON.parse(localStorage.getItem(CUSTOM_PRESETS_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function refreshPresetSelect(selected) {
+  const sel = $('#preset');
+  if (!sel) return;
+  const custom = loadCustomPresets();
+  sel.innerHTML = '';
+  const add = (value, text) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    sel.appendChild(o);
+  };
+  add('character', '角色预设');
+  add('scene', '场景预设');
+  for (const name of Object.keys(custom)) add('custom:' + name, '★ ' + name);
+  if (selected) sel.value = selected;
+}
+
+function applyPreset(key) {
+  if (key === 'character' || key === 'scene') {
+    state.params = { ...PRESETS[key] };
+  } else if (key && key.startsWith('custom:')) {
+    const p = loadCustomPresets()[key.slice(7)];
+    if (!p) return;
+    state.params = { ...p };
+  } else {
+    return;
+  }
+  buildControls();
+  scheduleRender();
+}
+
+function saveCurrentPreset() {
+  const name = prompt('预设名称：', '');
+  if (!name || !name.trim()) return;
+  const custom = loadCustomPresets();
+  custom[name.trim()] = { ...state.params };
+  localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(custom));
+  refreshPresetSelect('custom:' + name.trim());
+  toast(`已保存预设「${name.trim()}」`, true);
+}

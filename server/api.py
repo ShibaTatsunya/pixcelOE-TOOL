@@ -276,11 +276,13 @@ class Handler(BaseHTTPRequestHandler):
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         png = OUT_DIR / f"{stem}.png"
         meta = OUT_DIR / f"{stem}.json"
-        png.write_bytes(_png_bytes(res.final))
+        scale = max(1, min(8, int(d.get("scale") or 1)))
+        png.write_bytes(_png_bytes(res.final, scale))
         meta.write_text(json.dumps({
             "tool": "pixcelOE 1.0",
             "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "source_image": iid,
+            "scale": scale,
             "params": params.to_dict(),
             "output_size": [res.final.shape[1], res.final.shape[0]],
             "timings_ms": res.timings,
