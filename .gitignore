@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# 运行时导出目录（用户自己的产物，不进版本库）
+outputs/
+
+# 系统与临时
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+~$*

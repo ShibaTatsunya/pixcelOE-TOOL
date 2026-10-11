@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pixcelOE · 图片转像素图</title>
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◧</span>
+    <div>
+      <h1>pixcelOE</h1>
+      <p>把插画转成像素图 · 参数可视化调节</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-reset" class="btn ghost" title="恢复默认参数">重置参数</button>
+    <button id="btn-export" class="btn primary" disabled>导出 PNG</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ 左：参数面板 ============ -->
+  <aside class="panel params">
+    <div class="panel-head">
+      <h2>参数</h2>
+      <select id="preset" class="mini-select" title="载入预设">
+        <option value="character">角色预设</option>
+        <option value="scene">场景预设</option>
+        <option value="custom">自定义</option>
+      </select>
+    </div>
+    <div id="controls" class="controls"></div>
+  </aside>
+
+  <!-- ============ 中：预览 ============ -->
+  <section class="stage">
+    <div class="stage-toolbar">
+      <div class="seg" id="view-mode">
+        <button data-v="result" class="on">成品</button>
+        <button data-v="original">原图</button>
+        <button data-v="split">并排</button>
+      </div>
+      <div class="seg" id="zoom">
+        <button data-z="fit" class="on">适应</button>
+        <button data-z="1">1x</button>
+        <button data-z="2">2x</button>
+        <button data-z="4">4x</button>
+        <button data-z="8">8x</button>
+      </div>
+      <label class="chk"><input type="checkbox" id="chk-grid"> 像素网格</label>
+    </div>
+
+    <div class="canvas-wrap" id="canvas-wrap">
+      <div id="drop-hint" class="drop-hint">
+        <div class="drop-icon">⬆</div>
+        <p><b>把图片拖到这里</b>，或</p>
+        <button class="btn primary" id="btn-pick">选择图片</button>
+        <p class="hint-sub">支持 PNG / JPG / WEBP，建议使用生成阶段的大图（如 640×960）</p>
+        <input type="file" id="file" accept="image/*" hidden>
+      </div>
+
+      <div id="views" class="views hidden">
+        <div class="view" id="view-original"><img id="img-original" alt="原图"></div>
+        <div class="view" id="view-result"><img id="img-result" alt="成品"></div>
+      </div>
+
+      <div id="busy" class="busy hidden"><div class="spinner"></div><span>转换中…</span></div>
+    </div>
+
+    <div class="stage-status">
+      <span id="st-size">—</span>
+      <span id="st-time">—</span>
+      <span id="st-cache">—</span>
+      <span id="st-check">—</span>
+      <span id="st-warn" class="warn"></span>
+    </div>
+  </section>
+
+</main>
+
+<script src="/web/app.js"></script>
+</body>
+</html>

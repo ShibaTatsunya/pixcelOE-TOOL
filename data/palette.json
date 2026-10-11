@@ -1,0 +1,124 @@
+{
+  "spec_version": "0.1",
+  "date": "2026-10-11",
+  "status": "partial-freeze",
+  "frozen": [
+    "gray-character",
+    "gray-scene",
+    "accent-policy",
+    "background-and-matte",
+    "quantization-rule"
+  ],
+  "deferred": [
+    "canvas-baseline",
+    "tileset-size",
+    "animation-frame-rate-and-frames",
+    "sprite-pivot",
+    "dither-pattern"
+  ],
+  "gray": {
+    "character": {
+      "name": "Mengshi Character Gray",
+      "count": 8,
+      "hex": [
+        "#0F0F0F",
+        "#232323",
+        "#3A3A3A",
+        "#565656",
+        "#787878",
+        "#9E9E9E",
+        "#CACACA",
+        "#F2F2F2"
+      ],
+      "contains_pure_black": false,
+      "contains_pure_white": false,
+      "note": "实测三张角色图已严格统一，零改动。不含纯黑/纯白，保证色键抠图不误伤角色像素。"
+    },
+    "scene": {
+      "name": "Mengshi Scene Gray",
+      "count": 7,
+      "hex": [
+        "#000000",
+        "#282828",
+        "#5F5F5F",
+        "#919191",
+        "#B9B9B9",
+        "#DCDCDC",
+        "#FFFFFF"
+      ],
+      "note": "实测多数派（entrance/hallway/hallway2/outside 四图已一致）。"
+    }
+  },
+  "gray_remediation_todo": [
+    {
+      "asset": "bedroom",
+      "current_hex": ["#000000", "#232323", "#5A5A5A", "#7D7D7D", "#A0A0A0", "#CDCDCD", "#FFFFFF"],
+      "action": "requantize-to-scene-palette"
+    },
+    {
+      "asset": "livingroom",
+      "current_hex": ["#000000", "#232323", "#373737", "#555555", "#6E6E6E", "#919191", "#EBEBEB"],
+      "action": "requantize-to-scene-palette"
+    }
+  ],
+  "accent": {
+    "policy": "any-hue-flat-color",
+    "registration_required": false,
+    "hue_limit": null,
+    "count_limit": null,
+    "hard_requirements": [
+      "flat single color value per color region",
+      "no gradient, no interpolation, no anti-aliased transition",
+      "actual colors used per image must be extracted into delivery metadata"
+    ],
+    "area_ratio_reference_range": [0.001, 0.05],
+    "area_ratio_enforced": false,
+    "archived_measured": [
+      {
+        "hex": "#35A7B4",
+        "rgb": [53, 167, 180],
+        "observed_in": ["college", "wanderer"],
+        "area_ratio": [0.0014, 0.0014]
+      },
+      {
+        "hex": "#A92F35",
+        "rgb": [169, 47, 53],
+        "observed_in": ["suit", "wanderer"],
+        "area_ratio": [0.0001, 0.0015]
+      },
+      {
+        "hex": "#742020",
+        "rgb": [116, 32, 32],
+        "observed_in": ["suit"],
+        "area_ratio": [0.0221]
+      }
+    ]
+  },
+  "background": {
+    "generation_stage": {
+      "must_be_flat": true,
+      "one_per_image": true,
+      "allowed_hex": null,
+      "constraint": "单一平坦色（同色、无渐变、无纹理），且与所属调色板可区分；不再限定纯黑/纯白",
+      "palette_gray_as_background": "allowed",
+      "postprocess": ["scripts/white_background.py", "scripts/matte_background.py"],
+      "revision_note": "2026-10-11 用户同意放宽（原 allowed_hex=[#000000,#FFFFFF]）。依据：E014 换用二值线稿条件后背景仍落在中灰 #9E9E9E（74.99%）；E015 证明白化必须用严格颜色匹配（放宽容差或亮度泛洪会把角色浅色一并吞掉：角色占比 27.11%→17.05%、灰阶档 8→6），正确做法是降低抖动强度（24→10）避免背景跨档产生残点。",
+      "reason": "背景只需轮廓清晰、可可靠分离；分离一律走边界连通域而非色键（参考图 wanderer 的白底 #F2F2F2 同时是角色亮部色，色键必破洞）"
+    },
+    "delivery_stage": {
+      "require_alpha_zero": true,
+      "alpha_values": [0, 255],
+      "manual_touchup_allowed": true,
+      "checks": ["no-holes", "no-residual-background-pixels", "no-soft-edges"]
+    }
+  },
+  "quantization": {
+    "method": "nearest-color-mapping-against-fixed-palette",
+    "forbidden": "per-image-top-N-color-extraction"
+  },
+  "acceptance": {
+    "gray_out_of_palette_count": 0,
+    "anti_aliased_edge_pixels": 0,
+    "grid_aligned": true
+  }
+}
