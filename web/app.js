@@ -35,9 +35,9 @@ const GROUPS = [
     items: [
       { k: 'color_mode', t: 'bool', label: '保留彩色（不黑白化）', help: '勾选后跳过黑白化与灰阶分层，保留原图彩色，输出彩色像素图（强调色不再被抽走）。' },
       { k: 'desat', t: 'select', label: '黑白化算法', opts: [['hsl', 'HSL —— 和 PS 一致（推荐）'], ['rec709', 'Rec.709 —— 旧做法，脸会更暗']], help: '决定彩色图怎么变黑白。「HSL」跟 Photoshop 把饱和度拉到底的结果一致。' },
-      { k: 'gamma', t: 'range', label: '明暗曲线（Gamma）', min: 0.2, max: 3, step: 0.05, help: '调大 → 整体变暗；调小 → 整体变亮。' },
+      { k: 'gamma', t: 'range', label: '明暗曲线（Gamma）', min: 0.2, max: 3, step: 0.05, invert: true, help: '左边变暗、右边变亮，1 为中性。' },
       { k: 'brightness', t: 'range', label: '整体亮度', min: -150, max: 150, step: 1, help: '正数更亮、负数更暗，等价于 Photoshop 的「亮度」。' },
-      { k: 'contrast', t: 'range', label: '整体对比度', min: -50, max: 100, step: 1, help: '调大 → 黑白更分明、细节更锐；调小 → 更柔和。默认 0（中性，不额外调整）。' },
+      { k: 'contrast', t: 'range', label: '整体对比度', min: -100, max: 100, step: 1, help: '调大 → 黑白更分明、细节更锐；调小 → 更柔和。默认 0（居中，中性）。' },
     ],
   },
   {
@@ -189,16 +189,19 @@ function buildField(it) {
   if (it.t === 'range') {
     const val = document.createElement('span');
     val.className = 'val';
-    val.textContent = fmt(v);
+    const displayV = it.invert ? (v > 0 ? 1 / v : 1) : v;
+    val.textContent = fmt(displayV);
     top.appendChild(val);
     wrap.appendChild(top);
 
     const inp = document.createElement('input');
     inp.type = 'range';
-    inp.min = it.min; inp.max = it.max; inp.step = it.step; inp.value = v;
+    inp.min = it.min; inp.max = it.max; inp.step = it.step; inp.value = displayV;
     inp.addEventListener('input', () => {
-      val.textContent = fmt(parseFloat(inp.value));
-      setParam(it.k, parseFloat(inp.value));
+      const dv = parseFloat(inp.value);
+      const actual = it.invert ? (1 / dv) : dv;
+      val.textContent = fmt(dv);
+      setParam(it.k, actual);
     });
     wrap.appendChild(inp);
   } else if (it.t === 'select') {

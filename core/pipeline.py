@@ -101,7 +101,7 @@ class Params:
         self.palette_kind = self.palette_kind if self.palette_kind in ("character", "scene") else "character"
         self.gamma = float(max(0.2, min(3.0, self.gamma)))
         self.brightness = float(max(-150.0, min(150.0, self.brightness)))
-        self.contrast = float(max(-50.0, min(100.0, self.contrast)))
+        self.contrast = float(max(-100.0, min(100.0, self.contrast)))
         self.dark_tol = float(max(0.0, min(0.5, self.dark_tol)))
         self.dither = self.dither if self.dither in ("none", "bayer4", "bayer8") else "none"
         self.dither_strength = float(max(0.0, min(100.0, self.dither_strength)))
