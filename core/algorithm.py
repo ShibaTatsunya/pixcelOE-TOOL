@@ -299,7 +299,8 @@ def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
     return np.clip(a, 0.0, 255.0).astype(np.uint8)
 
 
-def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4) -> np.ndarray:
+def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4,
+                   dither: str = "none", dither_strength: float = 24.0) -> np.ndarray:
     """HSV 明度量化（色相不变）：减少各色相的明度色阶，色彩不失真。
 
     色相与饱和度完全保留；明度 V 按饱和度分档量化——
@@ -325,6 +326,15 @@ def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_leve
     h = np.where(mask_g, ((b - r) / d) + 2.0, h)
     h = np.where(mask_b, ((r - g) / d) + 4.0, h)
     h = (h / 6.0) % 1.0
+
+    # 抖动：量化前给明度 V 叠加 Bayer 图案（彩色模式也能用抖动模拟中间明度）
+    if dither in BAYER:
+        m = BAYER[dither]
+        m = m / m.size - 0.5
+        th, tw = m.shape
+        hh, ww = v.shape
+        tile = np.tile(m, (hh // th + 1, ww // tw + 1))[:hh, :ww]
+        v = np.clip(v + tile * (dither_strength / 255.0), 0.0, 1.0)
 
     # 明度 V 量化：彩色像素 -> color_value_levels 档，灰色像素 -> gray_value_levels 档
     clv = max(2, int(color_value_levels))
@@ -353,11 +363,12 @@ def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_leve
     return np.clip(out * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
-def downsample_color(rgb: np.ndarray, factor: int) -> np.ndarray:
-    """彩色降采样：每个 block 取 RGB 均值，无亮度偏移，保持色相（用于彩色模式）。
+def downsample_color(rgb: np.ndarray, factor: int, mode: str = "bridge") -> np.ndarray:
+    """彩色降采样（保持色相）：按模式选块内代表像素，不做亮度偏移。
 
-    与 ``contrast_downsample`` 不同，这里不做「亮度替换」偏移——那个偏移会改变 RGB 比例
-    从而改变色相。彩色模式下要求色相不变，因此用块内均值（色相的加权平均）。
+    与黑白 ``contrast_downsample`` 对应，但用「选像素」而非「亮度偏移」，因此保持色相。
+    模式：bridge（对比度感知，默认）/ dark（最暗）/ skew（最亮）/ median（中位）/
+    box、edge（块均值）。
     """
     h, w = rgb.shape[:2]
     pad_h = (factor - h % factor) % factor
@@ -366,8 +377,33 @@ def downsample_color(rgb: np.ndarray, factor: int) -> np.ndarray:
         rgb = np.pad(rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
     h, w = rgb.shape[:2]
     nh, nw = h // factor, w // factor
-    blocks = rgb[:nh * factor, :nw * factor].reshape(nh, factor, nw, factor, 3)
-    return blocks.mean(axis=(1, 3)).round().astype(np.uint8)
+    blocks = rgb[:nh * factor, :nw * factor].reshape(nh, factor, nw, factor, 3) \
+        .transpose(0, 2, 1, 3, 4).reshape(nh, nw, factor * factor, 3).astype(np.float32)
+    lum = blocks.mean(axis=3)  # 块内每个像素的灰度（对 RGB 通道求均值）
+    N = factor * factor
+
+    if mode in ("box", "edge"):
+        return blocks.mean(axis=2).round().astype(np.uint8)
+
+    if mode == "dark":
+        idx = lum.argmin(axis=2)
+    elif mode == "skew":
+        idx = lum.argmax(axis=2)
+    elif mode == "median":
+        idx = np.argsort(lum, axis=2)[..., N // 2]
+    else:  # bridge：偏暗取最暗、偏亮取最亮、否则取中位
+        lmin = lum.min(axis=2)
+        lmax = lum.max(axis=2)
+        lmed = np.median(lum, axis=2)
+        idx_min = lum.argmin(axis=2)
+        idx_max = lum.argmax(axis=2)
+        idx_med = np.argsort(lum, axis=2)[..., N // 2]
+        skew = lmed - (lmin + lmax) / 2.0
+        idx = np.where(skew < -8, idx_min, np.where(skew > 8, idx_max, idx_med))
+
+    ii = np.arange(nh)[:, None]
+    jj = np.arange(nw)[None, :]
+    return blocks[ii, jj, idx].round().astype(np.uint8)
 
 
 def desaturate_posterize(

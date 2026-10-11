@@ -224,7 +224,8 @@ def convert(
     if params.color_mode:
         # 彩色模式：色相量化（color_levels 档）+ 明度量化（posterize_levels 档），色彩不失真
         if params.enable_posterize:
-            post = quantize_color(post, params.color_levels, params.posterize_levels)
+            post = quantize_color(post, params.color_levels, params.posterize_levels,
+                                  params.dither, params.dither_strength)
     elif not params.posterize_skip:
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,
@@ -247,8 +248,8 @@ def convert(
     t0 = time.perf_counter()
     if params.enable_downsample:
         if params.color_mode:
-            # 彩色模式：块均值降采样，无亮度偏移，保持色相
-            small = downsample_color(expanded_rgb.astype(np.uint8), params.factor)
+            # 彩色模式：选像素降采样（保持色相），按 downsample 模式选块内代表像素
+            small = downsample_color(expanded_rgb.astype(np.uint8), params.factor, params.downsample)
         else:
             h, w = expanded_rgb.shape[:2]
             pad_h = (params.factor - h % params.factor) % params.factor

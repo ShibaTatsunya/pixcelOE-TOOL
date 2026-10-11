@@ -69,8 +69,6 @@ const GROUPS = [
     items: [
       { k: 'quantize_levels', t: 'range', label: '颜色数（量化档数）', min: 0, max: 8, step: 1, help: '0 = 用整套灰阶；改成 4 表示只在调色板里取 4 档，颜色更少、更统一。' },
       { k: 'no_quantize', t: 'bool', label: '不强制套调色板', help: '保留缩小后的原始颜色（一般不需要勾，勾了颜色会乱）。' },
-      { k: 'dither', t: 'select', label: '抖动（dither）', opts: [['none', '不抖动（默认）'], ['bayer4', '4×4 Bayer 有序抖动'], ['bayer8', '8×8 Bayer 有序抖动']], help: '在灰阶过渡处叠加规律纹理，模拟中间调。默认关闭（与产线逐像素一致）。' },
-      { k: 'dither_strength', t: 'range', label: '抖动强度', min: 0, max: 100, step: 1, help: '抖动偏移幅度，越大纹理越明显。' },
     ],
   },
 ];
@@ -139,12 +137,17 @@ function buildControls() {
     label.appendChild(span);
     sec.appendChild(label);
     sec.classList.toggle('off', !on);
+    const DITHER_ITEMS = [
+      { k: 'dither', t: 'select', label: '抖动（dither）', opts: [['none', '不抖动（默认）'], ['bayer4', '4×4 Bayer 有序抖动'], ['bayer8', '8×8 Bayer 有序抖动']], help: '在过渡处叠加规律纹理，模拟中间色阶（黑白/彩色都生效）。' },
+      { k: 'dither_strength', t: 'range', label: '抖动强度', min: 0, max: 100, step: 1, help: '抖动偏移幅度，越大纹理越明显。' },
+    ];
     const items = (g.enableKey === 'enable_posterize')
       ? (state.params.color_mode
-          ? [{ k: 'color_levels', t: 'range', label: '色彩层数（明度档数）', min: 2, max: 12, step: 1, help: '色相不变，只把彩色像素的明度减少到 N 档，档数越少色阶越简练。' }]
+          ? [{ k: 'color_levels', t: 'range', label: '色彩层数（明度档数）', min: 2, max: 12, step: 1, help: '色相不变，只把彩色像素的明度减少到 N 档，档数越少色阶越简练。' }, ...DITHER_ITEMS]
           : [
               { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '黑白灰像素的明度档数（原版语义）。0 = 不分层；4 层最常用。' },
               { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认。' },
+              ...DITHER_ITEMS,
             ])
       : g.items;
     for (const it of items) sec.appendChild(buildField(it));
