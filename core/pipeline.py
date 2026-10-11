@@ -21,7 +21,7 @@ import numpy as np
 
 from .algorithm import (DOWNSAMPLE_MODES, apply_dither, contrast_downsample,
                         desaturate_adjust, expand_only, nearest_palette, posterize_lum)
-from .palette import gray_rgb, load_palette, narrow_palette
+from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
 MAX_PIXELS = 40_000_000
@@ -251,7 +251,17 @@ def convert(
             pal_rgb = narrow_palette(gray_rgb(pal, params.palette_kind), params.quantize_levels)
             final = nearest_palette(small, list(pal_rgb))
     else:
-        final = small.copy()
+        # ⑤关闭：不量化到项目调色板，但收敛回②的分档值。否则③轮廓扩展的浮点运算
+        # 会把②的分档抹平成上万种连续灰度，用户调②（灰阶分几层）就看不出效果了。
+        if params.enable_posterize:
+            steps = np.array(posterize_steps(params.posterize_levels, params.posterize_mode,
+                                             gray_rgb(pal, params.palette_kind)), dtype=np.float32)
+            lum = small.astype(np.float32).mean(axis=2)
+            idx = np.abs(lum[:, :, None] - steps[None, None, :]).argmin(axis=2)
+            g = steps[idx].astype(np.uint8)
+            final = np.dstack([g, g, g])
+        else:
+            final = small.copy()
     timings["quantize"] = (time.perf_counter() - t0) * 1000
     timings["total"] = (time.perf_counter() - t_all) * 1000
 
