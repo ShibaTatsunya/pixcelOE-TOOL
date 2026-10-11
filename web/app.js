@@ -16,14 +16,14 @@ const PRESETS = {
     posterize_levels: 4, posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 4, downsample: 'bridge', dark_tol: 0.06,
-    palette_kind: 'character', quantize_levels: 4, no_quantize: false, canvas: '160x240',
+    palette_kind: 'character', quantize_levels: 4, no_quantize: false, dither: 'none', dither_strength: 24, canvas: '160x240',
   },
   scene: {
     posterize_skip: false, desat: 'hsl', gamma: 1, brightness: 0, contrast: 0,
     posterize_levels: 4, posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 2, downsample: 'bridge', dark_tol: 0.06,
-    palette_kind: 'scene', quantize_levels: 0, no_quantize: false, canvas: '640x360',
+    palette_kind: 'scene', quantize_levels: 0, no_quantize: false, dither: 'none', dither_strength: 24, canvas: '640x360',
   },
 };
 
@@ -68,6 +68,8 @@ const GROUPS = [
       { k: 'palette_kind', t: 'select', label: '用哪套灰阶', opts: [['character', '角色套（8 档灰）'], ['scene', '场景套（7 档灰）']], help: '角色和场景用两套不同的灰阶标准，和项目规格一致。' },
       { k: 'quantize_levels', t: 'range', label: '颜色数（量化档数）', min: 0, max: 8, step: 1, help: '0 = 用整套灰阶；改成 4 表示只在调色板里取 4 档，颜色更少、更统一。' },
       { k: 'no_quantize', t: 'bool', label: '不强制套调色板', help: '保留缩小后的原始颜色（一般不需要勾，勾了颜色会乱）。' },
+      { k: 'dither', t: 'select', label: '抖动（dither）', opts: [['none', '不抖动（默认）'], ['bayer4', '4×4 Bayer 有序抖动'], ['bayer8', '8×8 Bayer 有序抖动']], help: '在灰阶过渡处叠加规律纹理，模拟中间调。默认关闭（与产线逐像素一致）。' },
+      { k: 'dither_strength', t: 'range', label: '抖动强度', min: 0, max: 100, step: 1, help: '抖动偏移幅度，越大纹理越明显。' },
       { k: 'canvas', t: 'text', label: '目标画布尺寸', help: '用于验收，比如角色填 160x240。留空则不检查尺寸。' },
     ],
   },

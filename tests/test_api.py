@@ -16,6 +16,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 WF = ROOT.parent / "mengshi-art-workflow"
 SAMPLE = WF / "experiments" / "E048-front-light" / "outputs" / "canon_ps" / "bag_a" / "01_crop.png"
@@ -132,6 +134,20 @@ def main() -> int:
             size2 = r.headers.get("X-Out-Size")
         check(png2[:8] == b"\x89PNG\r\n\x1a\n" and size2 == "214x320",
               f"factor=3 不整除时自动补齐到 {size2}", size2 or "无 X-Out-Size")
+
+        # 5c) 抖动：bayer4 开启后输出仍在调色板内、且与关闭时不同
+        import io
+        from PIL import Image
+        with post_json("/api/render", {"id": iid, "params": {"dither": "bayer4", "dither_strength": 24,
+                "factor": 4, "posterize_skip": True, "palette_kind": "character", "quantize_levels": 4}}) as r:
+            png_d = r.read()
+        with post_json("/api/render", {"id": iid, "params": {"dither": "none",
+                "factor": 4, "posterize_skip": True, "palette_kind": "character", "quantize_levels": 4}}) as r:
+            png_n = r.read()
+        a_d = np.asarray(Image.open(io.BytesIO(png_d)).convert("RGB"))
+        a_n = np.asarray(Image.open(io.BytesIO(png_n)).convert("RGB"))
+        diff = int((np.abs(a_d.astype(int) - a_n.astype(int)).max(axis=2) > 0).sum())
+        check(diff > 0, f"抖动 bayer4 改变了输出（{diff} 像素不同）", str(diff))
 
         # 6) 报告（应命中渲染缓存，第二次很快）
         t0 = time.time()

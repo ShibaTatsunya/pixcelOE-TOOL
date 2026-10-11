@@ -62,6 +62,8 @@ class Params:
     palette_kind: str = "character"    # character | scene
     quantize_levels: int = 4           # 0 = 用完整调色板
     no_quantize: bool = False
+    dither: str = "none"               # none | bayer4 | bayer8（量化前有序抖动）
+    dither_strength: float = 24.0
 
     # ---- 输出 ----
     canvas: str | None = None          # "160x240"，None = 不做尺寸校验
@@ -89,6 +91,8 @@ class Params:
         self.brightness = float(max(-150.0, min(150.0, self.brightness)))
         self.contrast = float(max(-50.0, min(100.0, self.contrast)))
         self.dark_tol = float(max(0.0, min(0.5, self.dark_tol)))
+        self.dither = self.dither if self.dither in ("none", "bayer4", "bayer8") else "none"
+        self.dither_strength = float(max(0.0, min(100.0, self.dither_strength)))
         if self.crop is not None:
             c = [int(v) for v in self.crop]
             self.crop = c if len(c) == 4 and c[2] > c[0] and c[3] > c[1] else None
@@ -217,6 +221,8 @@ def convert(
         downsample=params.downsample,
         keep_thin=params.keep_thin,
         no_quantize=params.no_quantize,
+        dither=params.dither,
+        dither_strength=params.dither_strength,
         expanded_rgb=expanded_rgb,
     )
     timings["downsample_quantize"] = (time.perf_counter() - t0) * 1000

@@ -177,6 +177,58 @@ def nearest_palette(img: np.ndarray, palette) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
+# 有序抖动（pixelize.py 的 Bayer 图案，量化前在亮度上叠加）
+# --------------------------------------------------------------------------
+BAYER = {
+    "bayer4": np.array(
+        [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]],
+        dtype=np.float32,
+    ),
+    "bayer8": np.array(
+        [
+            [0, 32, 8, 40, 2, 34, 10, 42],
+            [48, 16, 56, 24, 50, 18, 58, 26],
+            [12, 44, 4, 36, 14, 46, 6, 38],
+            [60, 28, 52, 20, 62, 30, 54, 22],
+            [3, 35, 11, 43, 1, 33, 9, 41],
+            [51, 19, 59, 27, 49, 17, 57, 25],
+            [15, 47, 7, 39, 13, 45, 5, 37],
+            [63, 31, 55, 23, 61, 29, 53, 21],
+        ],
+        dtype=np.float32,
+    ),
+}
+
+#: 抖动图案选项（供 UI / API）
+DITHER_CHOICES = ("none", "bayer4", "bayer8")
+
+DITHER_HELP = {
+    "none": "不抖动（默认，输出与产线逐像素一致）",
+    "bayer4": "4×4 Bayer 有序抖动：灰阶过渡处出现规律纹理，模拟中间调",
+    "bayer8": "8×8 Bayer 有序抖动：纹理更细腻",
+}
+
+
+def apply_dither(img: np.ndarray, pattern: str, strength: float) -> np.ndarray:
+    """量化前的有序抖动：在亮度上叠加 Bayer 图案（与 ``pixelize.py --dither`` 一致）。
+
+    ``img`` 为 uint8 RGB(0-255)。灰阶图三通道相等时等价于直接在灰度上偏移；
+    彩色图按亮度比例缩放，保持色相。输出仍为 uint8，交给 ``nearest_palette`` 量化。
+    """
+    if pattern not in BAYER:
+        raise ValueError(f"未知抖动图案：{pattern!r}")
+    m = BAYER[pattern]
+    m = m / m.size - 0.5
+    th, tw = m.shape
+    h, w = img.shape[:2]
+    tile = np.tile(m, (h // th + 1, w // tw + 1))[:h, :w]
+    lum0 = img.astype(np.float32).mean(axis=2)
+    lum1 = np.clip(lum0 + tile * strength, 0, 255)
+    ratio = np.where(lum0 > 0, lum1 / np.maximum(lum0, 1e-6), 1.0)
+    return np.clip(img.astype(np.float32) * ratio[:, :, None], 0, 255).astype(np.uint8)
+
+
+# --------------------------------------------------------------------------
 # 两个阶段入口
 # --------------------------------------------------------------------------
 def desaturate_posterize(
@@ -237,6 +289,8 @@ def pixelize_oe(
     downsample: str = "bridge",
     keep_thin: bool = False,
     no_quantize: bool = False,
+    dither: str = "none",
+    dither_strength: float = 24.0,
     expanded_rgb=None,
 ):
     """轮廓扩展 + 对比度感知降采样 + 调色板量化。
@@ -264,6 +318,8 @@ def pixelize_oe(
         rgb_pad = np.pad(expanded_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
 
     small = contrast_downsample(rgb_pad.astype(np.uint8), factor, dark_tol, downsample)
+    if dither != "none":
+        small = apply_dither(small, dither, dither_strength)
     if no_quantize:
         # 注意：这是 pixelize_oe.py 原脚本的行为 —— small 已是 uint8(0-255)，
         # 再乘 255 会大量溢出后被 clip 成 255，成品几乎全白。照抄以保证一致性。
