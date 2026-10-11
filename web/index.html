@@ -21,6 +21,7 @@
     <button id="btn-redo" class="btn ghost" title="重做（Ctrl+Shift+Z / Ctrl+Y）" disabled>↷</button>
     <button id="btn-save-preset" class="btn ghost" title="把当前参数存为预设">保存预设</button>
     <button id="btn-reset" class="btn ghost" title="恢复默认参数">重置参数</button>
+    <button id="btn-batch" class="btn ghost" title="用当前参数批量转换多张图">批量导出</button>
     <button id="btn-export" class="btn primary" disabled>导出 PNG</button>
   </div>
 </header>
@@ -64,7 +65,7 @@
         <p><b>把图片拖到这里</b>，或</p>
         <button class="btn primary" id="btn-pick">选择图片</button>
         <p class="hint-sub">支持 PNG / JPG / WEBP，建议使用生成阶段的大图（如 640×960）</p>
-        <input type="file" id="file" accept="image/*" hidden>
+        <input type="file" id="file" accept="image/*" multiple hidden>
       </div>
 
       <div id="views" class="views hidden">

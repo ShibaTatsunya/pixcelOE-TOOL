@@ -82,6 +82,7 @@ const state = {
   view: 'result', zoom: 'fit', grid: false,
   meta: null, busyCount: 0, timer: null,
   history: [], hIndex: -1,
+  files: [],
 };
 
 /* ---------------- 小工具 ---------------- */
@@ -452,10 +453,46 @@ async function doExport() {
   }
 }
 
+async function batchExport() {
+  if (!state.files || state.files.length === 0) {
+    toast('请先选择多张图片');
+    return;
+  }
+  const prefix = prompt('批量导出文件名前缀：', 'batch');
+  if (!prefix || !prefix.trim()) return;
+  const scaleRaw = prompt('放大倍数（1/2/4/8，默认 4）：', '4');
+  const scale = Math.max(1, Math.min(8, parseInt(scaleRaw, 10) || 4));
+  const total = state.files.length;
+  let done = 0, failed = 0;
+  setBusy(true);
+  try {
+    for (let i = 0; i < total; i++) {
+      const up = await (await fetch('/api/upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: state.files[i],
+      })).json();
+      if (up.error) { failed++; continue; }
+      await api('/api/export', { id: up.id, params: state.params, name: `${prefix.trim()}_${i + 1}`, scale });
+      done++;
+      toast(`批量导出 ${done}/${total}`, true);
+    }
+    toast(`批量导出完成：成功 ${done}，失败 ${failed}`, done === total);
+  } catch (e) {
+    toast('批量导出失败：' + e.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bind() {
   $('#btn-pick').addEventListener('click', () => $('#file').click());
-  $('#file').addEventListener('change', (e) => upload(e.target.files[0]));
+  $('#file').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    state.files = files;
+    upload(files[0]);
+    if (files.length > 1) toast(`已载入 ${files.length} 张图，可点「批量导出」`, true);
+  });
 
   const hint = $('#drop-hint');
   hint.addEventListener('click', (e) => {
@@ -474,8 +511,12 @@ function bind() {
     })
   );
   window.addEventListener('drop', (e) => {
-    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) upload(f);
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) {
+      state.files = Array.from(files);
+      upload(files[0]);
+      if (files.length > 1) toast(`已载入 ${files.length} 张图，可点「批量导出」`, true);
+    }
   });
 
   $('#preset').addEventListener('change', (e) => {
@@ -514,6 +555,7 @@ function bind() {
   });
 
   $('#btn-export').addEventListener('click', doExport);
+  $('#btn-batch').addEventListener('click', batchExport);
   // 在画布上滚动滚轮 = 缩放（向上滚放大、向下滚缩小，在 1x~16x 整数倍间切换）
   $('#canvas-wrap').addEventListener('wheel', (e) => {
     if (!state.outW) return;

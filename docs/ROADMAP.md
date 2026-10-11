@@ -26,6 +26,11 @@
 - 量化前有序抖动：bayer4 / bayer8 两档 + 强度滑块，默认关闭（与产线逐像素一致）。
 - 测试：接口 22 项。
 
+### v1.3（本地 git 提交 `26741dc`）
+
+- 操作历史：参数改动自动入栈（50 步），顶部 ↶↷ 按钮 + Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 撤销/重做。
+- 测试：交互 18 项。
+
 ## 参考网络像素转换器后的规划
 
 参考：[PixelIt](https://github.com/arcos-dev/pixelit-ui)、[image2pixel](https://github.com/32comic/image2pixel-web)、[Image-to-Pixel](https://github.com/Tezumie/Image-to-Pixel)。这些工具普遍提供：调色板控制、抖动、预设、色深、缩放、导出。
@@ -37,7 +42,7 @@
 | P1 | 抖动（bayer 有序抖动，产线已有算法） | 高（灰阶过渡更丰富） | 中（需移植 dither 逻辑） | ✅ 已完成 v1.2 |
 | P1 | 自定义调色板（粘贴 hex / 上传 .gpl） | 中 | 中 | 待做 |
 | P2 | 批量处理（多图队列） | 高 | 高（队列/进度/内存） | 待做 |
-| P2 | 操作历史（撤销/重做参数） | 中 | 中 | 待做 |
+| P2 | 操作历史（撤销/重做参数） | 中 | 中 | ✅ 已完成 v1.3 |
 | P3 | 快捷键面板、导出历史 | 低 | 低 | 待做 |
 
 ## 约束（不可违反）

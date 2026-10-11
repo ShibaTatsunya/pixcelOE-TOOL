@@ -147,7 +147,7 @@ def main() -> int:
 
         # 关键元素
         for eid in ("view-mode", "zoom", "preset", "drop-hint", "canvas-wrap",
-                    "st-check", "btn-export"):
+                    "st-check", "btn-export", "btn-batch"):
             check(f'id="{eid}"' in dom, f"页面元素 #{eid} 存在")
 
         # 下拉选项（含来自 /api/meta 的降采样策略）
