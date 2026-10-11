@@ -299,23 +299,25 @@ def posterize_color(arr: np.ndarray, levels: int = 4) -> np.ndarray:
     return np.clip(a, 0.0, 255.0).astype(np.uint8)
 
 
-def quantize_hsl_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4) -> np.ndarray:
-    """HSL 明度量化（色相不变）：减少各色相的明度色阶，色彩不失真。
+def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4) -> np.ndarray:
+    """HSV 明度量化（色相不变）：减少各色相的明度色阶，色彩不失真。
 
-    色相与饱和度完全保留；明度按饱和度分档量化——
+    色相与饱和度完全保留；明度 V 按饱和度分档量化——
     彩色像素（饱和度 >= 0.1）量化到 ``color_value_levels`` 档，
-    灰色像素（饱和度 < 0.1）量化到 ``gray_value_levels`` 档。返回 RGB uint8。
+    灰色像素（饱和度 < 0.1）量化到 ``gray_value_levels`` 档。
+    用 HSV（饱和度 = (max-min)/max）而非 HSL，避免高明度下近白颜色被误判为高饱和、
+    进而把白色/淡色放大成饱和色。返回 RGB uint8。
     """
     a = arr.astype(np.float32) / 255.0
     r, g, b = a[..., 0], a[..., 1], a[..., 2]
     maxc = np.maximum(np.maximum(r, g), b)
     minc = np.minimum(np.minimum(r, g), b)
-    l = (maxc + minc) * 0.5
+    v = maxc
     d = np.maximum(maxc - minc, 1e-8)
-    s = np.where(l > 0.5, d / (2.0 - maxc - minc + 1e-8), d / (maxc + minc + 1e-8))
+    s = np.where(maxc > 1e-8, d / np.maximum(maxc, 1e-8), 0.0)
 
     # 色相 0-1（完全保留，不量化）
-    h = np.zeros_like(l)
+    h = np.zeros_like(v)
     mask_r = maxc == r
     mask_g = (maxc == g) & ~mask_r
     mask_b = ~mask_r & ~mask_g
@@ -324,27 +326,30 @@ def quantize_hsl_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_
     h = np.where(mask_b, ((r - g) / d) + 4.0, h)
     h = (h / 6.0) % 1.0
 
-    # 明度量化：彩色像素 -> color_value_levels 档，灰色像素 -> gray_value_levels 档
+    # 明度 V 量化：彩色像素 -> color_value_levels 档，灰色像素 -> gray_value_levels 档
     clv = max(2, int(color_value_levels))
     glv = max(2, int(gray_value_levels))
     lv = np.where(s >= 0.1, clv, glv).astype(np.int32)
-    l_q = np.zeros_like(l)
+    v_q = np.zeros_like(v)
     for k in np.unique(lv):
         m = lv == k
-        l_q[m] = (np.floor(l[m] * k) + 0.5) / k
-    l_q = np.clip(l_q, 0.0, 1.0)
+        v_q[m] = (np.floor(v[m] * k) + 0.5) / k
+    v_q = np.clip(v_q, 0.0, 1.0)
 
-    # HSL -> RGB（色相 H、饱和度 S 保留，明度用 l_q）
-    q = np.where(l_q < 0.5, l_q * (1.0 + s), l_q + s - l_q * s)
-    p = 2.0 * l_q - q
-
-    def _f(t):
-        t = np.mod(t, 1.0)
-        return np.where(t < 1.0 / 6.0, p + (q - p) * 6.0 * t,
-               np.where(t < 0.5, q,
-               np.where(t < 2.0 / 3.0, p + (q - p) * (2.0 / 3.0 - t) * 6.0, p)))
-
-    out = np.stack([_f(h + 1.0 / 3.0), _f(h), _f(h - 1.0 / 3.0)], axis=2)
+    # HSV -> RGB（色相 H、饱和度 S 保留，明度用 v_q）
+    h6 = h * 6.0
+    i = np.floor(h6).astype(np.int32) % 6
+    f = h6 - np.floor(h6)
+    p = v_q * (1.0 - s)
+    q = v_q * (1.0 - f * s)
+    t = v_q * (1.0 - (1.0 - f) * s)
+    out = np.zeros_like(a)
+    for idx, (rr, gg, bb) in enumerate([(v_q, t, p), (q, v_q, p), (p, v_q, t),
+                                         (p, q, v_q), (t, p, v_q), (v_q, p, q)]):
+        m = i == idx
+        out[..., 0][m] = rr[m]
+        out[..., 1][m] = gg[m]
+        out[..., 2][m] = bb[m]
     return np.clip(out * 255.0, 0.0, 255.0).astype(np.uint8)
 
 

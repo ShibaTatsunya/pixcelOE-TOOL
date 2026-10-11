@@ -21,7 +21,7 @@ import numpy as np
 
 from .algorithm import (DOWNSAMPLE_MODES, adjust_color, apply_dither, contrast_downsample,
                         desaturate_adjust, downsample_color, expand_only, nearest_palette,
-                        posterize_lum, quantize_hsl_color)
+                        posterize_lum, quantize_color)
 from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
@@ -224,7 +224,7 @@ def convert(
     if params.color_mode:
         # 彩色模式：色相量化（color_levels 档）+ 明度量化（posterize_levels 档），色彩不失真
         if params.enable_posterize:
-            post = quantize_hsl_color(post, params.color_levels, params.posterize_levels)
+            post = quantize_color(post, params.color_levels, params.posterize_levels)
     elif not params.posterize_skip:
         if params.enable_posterize:
             post = posterize_lum(lum, params.posterize_levels, params.posterize_mode,

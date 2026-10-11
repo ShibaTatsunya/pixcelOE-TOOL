@@ -41,13 +41,9 @@ const GROUPS = [
     ],
   },
   {
-    title: '② 分层（色彩层数 + 灰阶层数）',
+    title: '② 分层',
     enableKey: 'enable_posterize',
-    items: [
-      { k: 'color_levels', t: 'range', label: '色彩层数（彩色明度档数）', min: 2, max: 64, step: 1, help: '彩色模式下生效：色相完全不变，只把彩色像素的明度减少到 N 档，档数越少色阶越简练。黑白模式忽略。' },
-      { k: 'posterize_levels', t: 'range', label: '灰阶层数（灰色明度档数）', min: 0, max: 8, step: 1, help: '黑白灰像素的明度档数（原版语义）。彩色模式下低饱和像素用此档数。' },
-      { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认（仅黑白模式生效）。' },
-    ],
+    items: [],
   },
   {
     title: '③ 轮廓与线条',
@@ -143,7 +139,15 @@ function buildControls() {
     label.appendChild(span);
     sec.appendChild(label);
     sec.classList.toggle('off', !on);
-    for (const it of g.items) sec.appendChild(buildField(it));
+    const items = (g.enableKey === 'enable_posterize')
+      ? (state.params.color_mode
+          ? [{ k: 'color_levels', t: 'range', label: '色彩层数（明度档数）', min: 2, max: 12, step: 1, help: '色相不变，只把彩色像素的明度减少到 N 档，档数越少色阶越简练。' }]
+          : [
+              { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '黑白灰像素的明度档数（原版语义）。0 = 不分层；4 层最常用。' },
+              { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认。' },
+            ])
+      : g.items;
+    for (const it of items) sec.appendChild(buildField(it));
     host.appendChild(sec);
   }
 }
