@@ -20,8 +20,8 @@ from typing import Any
 import numpy as np
 
 from .algorithm import (DOWNSAMPLE_MODES, adjust_color, apply_dither, contrast_downsample,
-                        desaturate_adjust, expand_only, nearest_palette, posterize_lum,
-                        quantize_hsl_color)
+                        desaturate_adjust, downsample_color, expand_only, nearest_palette,
+                        posterize_lum, quantize_hsl_color)
 from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
@@ -246,13 +246,17 @@ def convert(
     # ④ 像素块大小：降采样（跳过时保持原尺寸）
     t0 = time.perf_counter()
     if params.enable_downsample:
-        h, w = expanded_rgb.shape[:2]
-        pad_h = (params.factor - h % params.factor) % params.factor
-        pad_w = (params.factor - w % params.factor) % params.factor
-        rgb_pad = expanded_rgb
-        if pad_h or pad_w:
-            rgb_pad = np.pad(expanded_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
-        small = contrast_downsample(rgb_pad.astype(np.uint8), params.factor, params.dark_tol, params.downsample)
+        if params.color_mode:
+            # 彩色模式：块均值降采样，无亮度偏移，保持色相
+            small = downsample_color(expanded_rgb.astype(np.uint8), params.factor)
+        else:
+            h, w = expanded_rgb.shape[:2]
+            pad_h = (params.factor - h % params.factor) % params.factor
+            pad_w = (params.factor - w % params.factor) % params.factor
+            rgb_pad = expanded_rgb
+            if pad_h or pad_w:
+                rgb_pad = np.pad(expanded_rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
+            small = contrast_downsample(rgb_pad.astype(np.uint8), params.factor, params.dark_tol, params.downsample)
     else:
         small = np.clip(expanded_rgb, 0, 255).astype(np.uint8)
     timings["downsample"] = (time.perf_counter() - t0) * 1000

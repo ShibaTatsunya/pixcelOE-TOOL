@@ -335,7 +335,6 @@ def quantize_hsl_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_
     l_q = np.clip(l_q, 0.0, 1.0)
 
     # HSL -> RGB（色相 H、饱和度 S 保留，明度用 l_q）
-    h6 = h * 6.0
     q = np.where(l_q < 0.5, l_q * (1.0 + s), l_q + s - l_q * s)
     p = 2.0 * l_q - q
 
@@ -345,8 +344,25 @@ def quantize_hsl_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_
                np.where(t < 0.5, q,
                np.where(t < 2.0 / 3.0, p + (q - p) * (2.0 / 3.0 - t) * 6.0, p)))
 
-    out = np.stack([_f(h6 + 1.0 / 3.0), _f(h6), _f(h6 - 1.0 / 3.0)], axis=2)
+    out = np.stack([_f(h + 1.0 / 3.0), _f(h), _f(h - 1.0 / 3.0)], axis=2)
     return np.clip(out * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def downsample_color(rgb: np.ndarray, factor: int) -> np.ndarray:
+    """彩色降采样：每个 block 取 RGB 均值，无亮度偏移，保持色相（用于彩色模式）。
+
+    与 ``contrast_downsample`` 不同，这里不做「亮度替换」偏移——那个偏移会改变 RGB 比例
+    从而改变色相。彩色模式下要求色相不变，因此用块内均值（色相的加权平均）。
+    """
+    h, w = rgb.shape[:2]
+    pad_h = (factor - h % factor) % factor
+    pad_w = (factor - w % factor) % factor
+    if pad_h or pad_w:
+        rgb = np.pad(rgb, ((0, pad_h), (0, pad_w), (0, 0)), mode="edge")
+    h, w = rgb.shape[:2]
+    nh, nw = h // factor, w // factor
+    blocks = rgb[:nh * factor, :nw * factor].reshape(nh, factor, nw, factor, 3)
+    return blocks.mean(axis=(1, 3)).round().astype(np.uint8)
 
 
 def desaturate_posterize(
