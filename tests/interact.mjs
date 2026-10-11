@@ -161,6 +161,19 @@ async function main() {
       R.dragDy = wrap.scrollTop - st0;
       R.cursorUp = wrap.style.cursor;
 
+      // 操作历史：改 factor 后撤销/重做
+      const fInput = () => document.querySelector('.field[data-k="factor"] input');
+      const fBefore = fInput().value;
+      fInput().value = '8';
+      fInput().dispatchEvent(new Event('input', { bubbles: true }));
+      const fAfter = fInput().value;
+      document.querySelector('#btn-undo').click();
+      const fUndo = fInput().value;
+      document.querySelector('#btn-redo').click();
+      const fRedo = fInput().value;
+      R.histOk = (fAfter === '8' && fUndo === fBefore && fRedo === '8');
+      R.histDetail = fBefore + '→' + fAfter + '→undo:' + fUndo + '→redo:' + fRedo;
+
       const ps = document.getElementById('preset');
       const f = () => document.querySelector('.field[data-k="factor"] input')?.value;
       ps.value = 'scene'; ps.dispatchEvent(new Event('change', { bubbles: true }));
@@ -188,6 +201,7 @@ async function main() {
     check(r.wheelUp !== r.w1, `滚轮向上滚 → 放大（${r.w1} → ${r.wheelUp}）`, `${r.w1} → ${r.wheelUp}`);
     check(r.wheelDown !== r.wheelUp, `滚轮向下滚 → 缩小（${r.wheelUp} → ${r.wheelDown}）`, `${r.wheelUp} → ${r.wheelDown}`);
     check(r.dragDy > 0, `左键拖动平移生效（scrollTop 变化 ${r.dragDy}px）`, `scrollH=${r.scrollH} clientH=${r.clientH} cursorDown=${r.cursorDown} cursorUp=${r.cursorUp}`);
+    check(r.histOk === true, `操作历史撤销/重做生效（${r.histDetail}）`, r.histDetail);
 
     check(r.scene === '2', '场景预设把缩小倍数设为 2', String(r.scene));
     check(r.char === '4', '角色预设把缩小倍数设为 4', String(r.char));

@@ -81,6 +81,7 @@ const state = {
   params: { ...PRESETS.character },
   view: 'result', zoom: 'fit', grid: false,
   meta: null, busyCount: 0, timer: null,
+  history: [], hIndex: -1,
 };
 
 /* ---------------- 小工具 ---------------- */
@@ -211,10 +212,47 @@ function fmt(v) {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 }
 
+function pushHistory() {
+  const cur = JSON.stringify(state.params);
+  const top = state.hIndex >= 0 ? JSON.stringify(state.history[state.hIndex]) : null;
+  if (cur === top) return;
+  state.history = state.history.slice(0, state.hIndex + 1);
+  state.history.push({ ...state.params });
+  state.hIndex++;
+  if (state.history.length > 50) { state.history.shift(); state.hIndex--; }
+  refreshHistButtons();
+}
+
 function setParam(k, value) {
   state.params[k] = value;
   $('#preset').value = 'custom';
+  pushHistory();
   scheduleRender();
+}
+
+function undo() {
+  if (state.hIndex <= 0) return;
+  state.hIndex--;
+  state.params = { ...state.history[state.hIndex] };
+  buildControls();
+  scheduleRender();
+  refreshHistButtons();
+}
+
+function redo() {
+  if (state.hIndex >= state.history.length - 1) return;
+  state.hIndex++;
+  state.params = { ...state.history[state.hIndex] };
+  buildControls();
+  scheduleRender();
+  refreshHistButtons();
+}
+
+function refreshHistButtons() {
+  const u = $('#btn-undo');
+  const r = $('#btn-redo');
+  if (u) u.disabled = state.hIndex <= 0;
+  if (r) r.disabled = state.hIndex >= state.history.length - 1;
 }
 
 function scheduleRender() {
@@ -514,11 +552,15 @@ function bind() {
 
   window.addEventListener('resize', () => applyZoom());
 
+  $('#btn-undo').addEventListener('click', undo);
+  $('#btn-redo').addEventListener('click', redo);
+
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      doExport();
-    }
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (k === 's') { e.preventDefault(); doExport(); }
+    else if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
   });
 }
 
@@ -533,6 +575,9 @@ async function init() {
   // 调色板里的画布建议值
   refreshPresetSelect();
   buildControls();
+  state.history = [{ ...state.params }];   // 初始参数作为历史起点
+  state.hIndex = 0;
+  refreshHistButtons();
 }
 
 init();
@@ -572,6 +617,7 @@ function applyPreset(key) {
   } else {
     return;
   }
+  pushHistory();
   buildControls();
   scheduleRender();
 }
