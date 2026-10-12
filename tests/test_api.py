@@ -183,6 +183,51 @@ def main() -> int:
             png_p.unlink()
             meta_p.unlink()
 
+        # Selective artwork uses original color masks, source ROI and exact fills.
+        from test_selective import fixture, rules
+        buf = io.BytesIO(); Image.fromarray(fixture()).save(buf, format='PNG')
+        with post_raw('/api/upload', buf.getvalue()) as r:
+            selective_id = json.loads(r.read())['id']
+        selective_params = dict(selective_mode=True, factor=1, enable_outline=False, accent_rules=rules())
+        with post_json('/api/render', {'id': selective_id, 'params': selective_params}) as r:
+            art = np.asarray(Image.open(io.BytesIO(r.read())).convert('RGB'))
+        mask = art.max(axis=2)-art.min(axis=2)>8
+        check(int(mask.sum()) == 120 and np.all(art[mask] == [91,25,28]), '抽色输出保持灰阶明度、框外同色保持灰阶')
+        with post_json('/api/report', {'id': selective_id, 'params': selective_params}) as r:
+            selective_report = json.loads(r.read())
+        check(selective_report['validate']['pass'] and selective_report['validate']['details']['accent_pixels'] == 120,
+              '抽色验收记录实际强调色面积')
+        with post_json('/api/export', {'id': selective_id, 'params': selective_params, 'name': '_api_selective_test', 'scale': 2}) as r:
+            selective_export = json.loads(r.read())
+        metadata = Path(selective_export['meta']); selective_meta = json.loads(metadata.read_text(encoding='utf-8'))
+        check(selective_meta['params']['accent_rules'][0]['region'] == [0,0,.5,1] and selective_meta['validate']['pass'],
+              '抽色导出保存选色、框选与验收结果')
+        Path(selective_export['png']).unlink(); metadata.unlink()
+
+        from test_color_regressions import painted_rules
+        paint_params = {**selective_params, 'accent_rules': painted_rules(True)}
+        with post_json('/api/render', {'id': selective_id, 'params': paint_params}) as r:
+            painted_art = np.asarray(Image.open(io.BytesIO(r.read())).convert('RGB'))
+        paint_count = int((np.ptp(painted_art.astype(int), axis=2)>8).sum())
+        check(0 < paint_count < 120, '服务版画笔和擦除遮罩共同限制抽色区域')
+        with post_json('/api/export', {'id': selective_id, 'params': paint_params, 'name': '_api_paint_test'}) as r:
+            painted_export = json.loads(r.read())
+        painted_meta_path = Path(painted_export['meta'])
+        painted_meta = json.loads(painted_meta_path.read_text(encoding='utf-8'))
+        strokes = painted_meta['params']['accent_rules'][0]['paint_mask']['strokes']
+        check(len(strokes) == 2 and strokes[1]['erase'] and painted_meta['validate']['pass'], '服务版导出记录完整笔画和擦除操作')
+        Path(painted_export['png']).unlink(); painted_meta_path.unlink()
+        with post_json('/api/render', {'id': selective_id, 'params': {**selective_params,
+                'accent_rules': [{**rules()[0], 'min_size':121}]}}) as r:
+            filtered = np.asarray(Image.open(io.BytesIO(r.read())).convert('RGB'))
+        check(not np.any(np.ptp(filtered.astype(int), axis=2)>8), '服务版大于64的连通区域阈值生效')
+        whitebuf=io.BytesIO(); Image.fromarray(np.full((16,16,3), [251,253,255], dtype=np.uint8)).save(whitebuf,format='PNG')
+        with post_raw('/api/upload',whitebuf.getvalue()) as r:
+            white_id=json.loads(r.read())['id']
+        with post_json('/api/render',{'id':white_id,'params':{'color_mode':True,'brightness':-70,'color_levels':4}}) as r:
+            darkwhite=np.asarray(Image.open(io.BytesIO(r.read())).convert('RGB'))
+        check(not np.any(np.ptp(darkwhite.astype(int),axis=2)), '服务版近白背景降低亮度后不染色')
+
         # 8) 错误分支
         try:
             get("/api/nope")

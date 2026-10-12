@@ -32,7 +32,8 @@ from urllib.parse import urlparse, parse_qs
 import numpy as np
 from PIL import Image
 
-from core.palette import KINDS, gray_hex, load_palette
+from core.palette import KINDS, gray_hex, gray_rgb, load_palette, rgb_to_hex
+from core.selective import accent_palette
 from core.algorithm import DOWNSAMPLE_HELP, DOWNSAMPLE_MODES
 from core.pipeline import MAX_PIXELS, ExpandCache, Params, convert
 from core.validate import validate
@@ -95,7 +96,7 @@ class App:
                 params.palette_kind,
                 self.palette,
                 canvas=params.canvas,
-                extra_colors=[],
+                extra_colors=[rgb_to_hex(c) for c in accent_palette(params.accent_rules, gray_rgb(self.palette, params.palette_kind))] if params.selective_mode else [],
             )
             entry = {"result": res, "report": report, "params": params, "t": time.time()}
             self.renders[key] = entry

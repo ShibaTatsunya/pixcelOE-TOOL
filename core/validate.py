@@ -101,7 +101,7 @@ def validate(
     checks.append(
         {
             "name": "palette",
-            "label": "用色都在灰阶内",
+            "label": "用色符合灰阶与抽色规则" if extra_rgb else "用色都在灰阶内",
             "pass": len(out_of_palette) == 0,
             "detail": f"灰阶之外的用色有 {len(out_of_palette)} 种"
             + (

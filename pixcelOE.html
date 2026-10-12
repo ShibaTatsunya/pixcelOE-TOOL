@@ -34,7 +34,7 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:14px/1.
 .views{display:flex;gap:16px;align-items:center}
 .view{position:relative;line-height:0}
 .view img{display:block;image-rendering:pixelated;max-width:none}
-.tag{position:absolute;left:4px;top:4px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 6px;border-radius:4px;display:none}
+.tag{pointer-events:none;position:absolute;left:4px;top:4px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:2px 6px;border-radius:4px;display:none}
 .views.result #view-original{display:none}
 .views.original #view-result{display:none}
 .views.original #view-original .tag,.views.split #view-original .tag{display:block}
@@ -133,7 +133,7 @@ select{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(
 </div>
 <div id="toast"></div>
 
-<script>
+<script id="pipeline-code">
 /* ============================ 调色板 ============================ */
 const PALETTE = {
   gray: {
@@ -146,29 +146,41 @@ function grayRgb(kind){return PALETTE.gray[kind].hex.map(hexToRgb);}
 function narrowPalette(pal, levels){
   const n=pal.length;
   if(levels<=0||levels>=n) return pal.slice();
+  if(levels===1)return [pal[0]];
   const out=[];
-  for(let i=0;i<levels;i++){const idx=Math.round(i*(n-1)/(levels-1));out.push(pal[idx]);}
+  for(let i=0;i<levels;i++){const idx=roundEven(i*(n-1)/(levels-1));out.push(pal[idx]);}
   return out;
 }
+function roundEven(v){const lo=Math.floor(v);return v-lo===0.5?(lo%2===0?lo:lo+1):Math.round(v);}
 function posterizeSteps(levels, mode, pal){
-  if(levels&&mode==='ps'){const step=255/(levels-1);const out=[];for(let i=0;i<levels;i++)out.push(Math.round(i*step));return out;}
+  if(levels===1)levels=2;
+  if(levels&&mode==='ps'){const step=255/(levels-1);const out=[];for(let i=0;i<levels;i++)out.push(roundEven(i*step));return out;}
   if(!pal) pal=grayRgb('character');
   let vals=pal.map(c=>c[0]);
-  if(levels&&levels!==vals.length){const lo=Math.min(...vals),hi=Math.max(...vals);vals=[];for(let i=0;i<levels;i++)vals.push(Math.round(lo+(hi-lo)*i/(levels-1)));}
+  if(levels&&levels!==vals.length){const lo=Math.min(...vals),hi=Math.max(...vals);vals=[];for(let i=0;i<levels;i++)vals.push(roundEven(lo+(hi-lo)*i/(levels-1)));}
   return [...new Set(vals.map(v=>Math.round(v)))].sort((a,b)=>a-b);
 }
 
 /* ============================ 图像工具 ============================ */
-function lum709(r,g,b){return Math.fround(0.2126*r+0.7152*g+0.0722*b);}
+const f32=Math.fround;
+function lum709(r,g,b){return f32(f32(f32(f32(0.2126)*r)+f32(f32(0.7152)*g))+f32(f32(0.0722)*b));}
 function clamp(v,a,b){return v<a?a:(v>b?b:v);}
-function rgb2gray(rgb){const n=rgb.length/3;const g=new Float32Array(n);for(let i=0;i<n;i++){const o=i*3;g[i]=lum709(rgb[o],rgb[o+1],rgb[o+2]);}return g;}
+function rgb2gray(rgb){const n=rgb.length/3;const g=new Float32Array(n);for(let i=0;i<n;i++){const o=i*3;g[i]=f32(0.2126*rgb[o]+0.7152*rgb[o+1]+0.0722*rgb[o+2]);}return g;}
 
-/* 排序 median（与 numpy 一致：浮点排序，偶数取中间两平均） */
+/* Quickselect avoids allocating and sorting a JS array for every source pixel. */
+let medianScratch=new Float32Array(256);
 function medCount(vals,n){
-  const a=Array.from(vals.slice(0,n));
-  a.sort((x,y)=>x-y);
-  const mid=n>>1;
-  return n%2===1?a[mid]:Math.fround((a[mid-1]+a[mid])/2);
+  if(medianScratch.length<n)medianScratch=new Float32Array(n);
+  const a=medianScratch;a.set(vals.subarray(0,n));const mid=n>>1;
+  let left=0,right=n-1;
+  while(left<right){
+    const pivot=a[(left+right)>>1];let i=left,j=right;
+    while(i<=j){while(a[i]<pivot)i++;while(a[j]>pivot)j--;if(i<=j){const v=a[i];a[i++]=a[j];a[j--]=v;}}
+    if(mid<=j)right=j;else if(mid>=i)left=i;else break;
+  }
+  if(n%2)return a[mid];
+  let lower=-Infinity;for(let i=0;i<mid;i++)if(a[i]>lower)lower=a[i];
+  return f32(f32(lower+a[mid])/2);
 }
 
 /* 窗口 (2r+1)² 的 min/max/median（边缘复制） */
@@ -210,11 +222,11 @@ function outlineExpand(gray,h,w,patch,thickness,keepThin){
   let wmax=0;
   const wt=new Float32Array(h*w);
   for(let i=0;i<h*w;i++){const w1=Math.fround(Math.fround(1-Math.fround(med[i]/255))*bright[i]);const w2=Math.fround(Math.abs(Math.fround(bright[i]-dark[i])));wt[i]=Math.fround(w1+w2);if(wt[i]>wmax)wmax=wt[i];}
-  for(let i=0;i<h*w;i++)wt[i]=wmax>0?Math.fround(wt[i]/(wmax+1e-6)):0;
+  for(let i=0;i<h*w;i++)wt[i]=wmax>0?Math.fround(wt[i]/f32(wmax+1e-6)):0;
   const eroded=morph(gray,h,w,thickness,'min');
   const dilated=morph(gray,h,w,thickness,'max');
   const blended=new Float32Array(h*w);
-  for(let i=0;i<h*w;i++)blended[i]=Math.fround(Math.fround(wt[i]*dilated[i])+Math.fround((1-wt[i])*eroded[i]));
+  for(let i=0;i<h*w;i++)blended[i]=Math.fround(Math.fround(wt[i]*dilated[i])+Math.fround(f32(1-wt[i])*eroded[i]));
   let closed=morph(morph(blended,h,w,1,'max'),h,w,1,'min');
   if(keepThin)return closed;
   return morph(morph(closed,h,w,1,'min'),h,w,1,'max');
@@ -224,27 +236,26 @@ function outlineExpand(gray,h,w,patch,thickness,keepThin){
 function expandOnly(rgb,h,w,patch,thickness,keepThin){
   const gray=rgb2gray(rgb);
   const expanded=outlineExpand(gray,h,w,patch,thickness,keepThin);
-  const out=new Uint8ClampedArray(h*w*3);
+  const out=new Float32Array(h*w*3);
   for(let i=0;i<h*w;i++){
     const o=i*3;
     const ratio=clamp(Math.fround(expanded[i]/Math.max(gray[i],1.0)),0,4);
-    out[o]=clamp(rgb[o]*ratio,0,255);
-    out[o+1]=clamp(rgb[o+1]*ratio,0,255);
-    out[o+2]=clamp(rgb[o+2]*ratio,0,255);
+    out[o]=clamp(f32(rgb[o]*ratio),0,255);
+    out[o+1]=clamp(f32(rgb[o+1]*ratio),0,255);
+    out[o+2]=clamp(f32(rgb[o+2]*ratio),0,255);
   }
   return [out,gray];
 }
 
 /* ============================ 去饱和 / 分档 / 明暗 ============================ */
-function desaturateAdjust(rgb,h,w,desat,gamma,brightness,contrast){
+function desaturateAdjust(rgb,h,w,desat,brightness,contrast){
   const lum=new Float32Array(h*w);
   const k=contrast?((259*(contrast+255))/(255*(259-contrast))):1;
   for(let i=0;i<h*w;i++){
     const o=i*3,r=rgb[o],g=rgb[o+1],b=rgb[o+2];
     let l=desat==='hsl'?Math.fround((Math.max(r,g,b)+Math.min(r,g,b))*0.5):lum709(r,g,b);
-    if(gamma!==1)l=Math.fround(255*Math.pow(l/255,gamma));
     if(brightness)l=Math.fround(l+brightness);
-    if(contrast)l=Math.fround(k*(l-128)+128);
+    if(contrast)l=f32(f32(f32(k)*f32(l-128))+128);
     lum[i]=clamp(l,0,255);
   }
   return lum;
@@ -268,38 +279,38 @@ function posterizeLum(lum,h,w,levels,mode,steps){
   return out;
 }
 
-function adjustColor(rgb,h,w,gamma,brightness,contrast){
+function adjustColor(rgb,h,w,brightness,contrast){
   const out=new Uint8ClampedArray(h*w*3);
   const k=contrast?((259*(contrast+255))/(255*(259-contrast))):1;
   for(let i=0;i<h*w;i++){
     const o=i*3,r=rgb[o],g=rgb[o+1],b=rgb[o+2];
     let l0=(Math.max(r,g,b)+Math.min(r,g,b))*0.5;
     let l=l0;
-    if(gamma!==1)l=255*Math.pow(l/255,gamma);
-    if(brightness)l=l+brightness;
-    if(contrast)l=k*(l-128)+128;
+    if(brightness)l=f32(l+brightness);
+    if(contrast)l=f32(f32(f32(k)*f32(l-128))+128);
     l=clamp(l,0,255);
-    const ratio=l0>0?l/Math.max(l0,1e-6):1;
-    out[o]=clamp(r*ratio,0,255);out[o+1]=clamp(g*ratio,0,255);out[o+2]=clamp(b*ratio,0,255);
+    const ratio=l0>0?f32(l/Math.max(l0,1e-6)):1;
+    out[o]=Math.trunc(clamp(f32(r*ratio),0,255));out[o+1]=Math.trunc(clamp(f32(g*ratio),0,255));out[o+2]=Math.trunc(clamp(f32(b*ratio),0,255));
   }
   return out;
 }
 
 /* ============================ LAB ============================ */
-function srgbToLinear(c){return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
-function linearToSrgb(c){return c<=0.0031308?12.92*c:1.055*Math.pow(Math.max(c,0),1/2.4)-0.055;}
-function labF(t){const d=6/29;return t>d*d*d?Math.cbrt(t):t/(3*d*d)+4/29;}
-function labFinv(t){const d=6/29;return t>d?t*t*t:3*d*d*(t-4/29);}
+function srgbToLinear(c){return c<=f32(0.04045)?f32(c/f32(12.92)):f32(Math.pow(f32(f32(c+f32(0.055))/f32(1.055)),f32(2.4)));}
+function linearToSrgb(c){return c<=f32(0.0031308)?f32(f32(12.92)*c):f32(f32(f32(1.055)*f32(Math.pow(Math.max(c,0),f32(1/2.4))))-f32(0.055));}
+function labF(t){const d=6/29;return t>f32(d*d*d)?f32(Math.cbrt(t)):f32(f32(t/f32(3*d*d))+f32(4/29));}
+function labFinv(t){const d=6/29;return t>f32(d)?f32(Math.pow(t,3)):f32(f32(3*d*d)*f32(t-f32(4/29)));}
+function dot3(a,b,c,x,y,z){return f32(f32(f32(f32(a)*x)+f32(f32(b)*y))+f32(f32(c)*z));}
 function rgbToLab(rgb,h,w){
   const lab=new Float32Array(h*w*3);
   for(let i=0;i<h*w;i++){
     const o=i*3;
-    const r=srgbToLinear(rgb[o]/255),g=srgbToLinear(rgb[o+1]/255),b=srgbToLinear(rgb[o+2]/255);
-    const x=0.412453*r+0.357580*g+0.180423*b;
-    const y=0.212671*r+0.715160*g+0.072169*b;
-    const z=0.019334*r+0.119193*g+0.950227*b;
-    const fx=labF(x/0.95047),fy=labF(y/1.0),fz=labF(z/1.08883);
-    lab[o]=116*fy-16;lab[o+1]=500*(fx-fy);lab[o+2]=200*(fy-fz);
+    const r=srgbToLinear(f32(rgb[o]/255)),g=srgbToLinear(f32(rgb[o+1]/255)),b=srgbToLinear(f32(rgb[o+2]/255));
+    const x=dot3(0.412453,0.357580,0.180423,r,g,b);
+    const y=dot3(0.212671,0.715160,0.072169,r,g,b);
+    const z=dot3(0.019334,0.119193,0.950227,r,g,b);
+    const fx=labF(f32(x/f32(0.95047))),fy=labF(y),fz=labF(f32(z/f32(1.08883)));
+    lab[o]=f32(f32(116*fy)-16);lab[o+1]=f32(500*f32(fx-fy));lab[o+2]=f32(200*f32(fy-fz));
   }
   return lab;
 }
@@ -307,45 +318,86 @@ function labToRgb(lab,h,w){
   const rgb=new Uint8ClampedArray(h*w*3);
   for(let i=0;i<h*w;i++){
     const o=i*3,L=lab[o],A=lab[o+1],B=lab[o+2];
-    const fy=(L+16)/116,fx=fy+A/500,fz=fy-B/200;
-    const x=0.95047*labFinv(fx),y=labFinv(fy),z=1.08883*labFinv(fz);
-    let r=3.240479*x-1.537150*y-0.498535*z;
-    let g=-0.969256*x+1.875992*y+0.041556*z;
-    let b=0.055648*x-0.204043*y+1.057311*z;
-    rgb[o]=clamp(linearToSrgb(r)*255,0,255);
-    rgb[o+1]=clamp(linearToSrgb(g)*255,0,255);
-    rgb[o+2]=clamp(linearToSrgb(b)*255,0,255);
+    const fy=f32(f32(L+16)/116),fx=f32(fy+f32(A/500)),fz=f32(fy-f32(B/200));
+    const x=f32(f32(0.95047)*labFinv(fx)),y=labFinv(fy),z=f32(f32(1.08883)*labFinv(fz));
+    let r=dot3(3.240479,-1.537150,-0.498535,x,y,z);
+    let g=dot3(-0.969256,1.875992,0.041556,x,y,z);
+    let b=dot3(0.055648,-0.204043,1.057311,x,y,z);
+    rgb[o]=Math.trunc(clamp(f32(linearToSrgb(r)*255),0,255));
+    rgb[o+1]=Math.trunc(clamp(f32(linearToSrgb(g)*255),0,255));
+    rgb[o+2]=Math.trunc(clamp(f32(linearToSrgb(b)*255),0,255));
   }
   return rgb;
 }
 
-/* LAB 亮度量化 + 抖动 */
+/* Hue-preserving HSL lightness layers + optional lightness dither. */
 const BAYER={
   bayer4:[[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]],
   bayer8:[[0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],[12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],[3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],[15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]]
 };
 function quantizeColor(rgb,h,w,colorLevels,grayLevels,dither,ditherStrength){
-  const lab=rgbToLab(rgb,h,w);
-  const L=new Float32Array(h*w),A=new Float32Array(h*w),B=new Float32Array(h*w);
-  for(let i=0;i<h*w;i++){const o=i*3;L[i]=lab[o];A[i]=lab[o+1];B[i]=lab[o+2];}
-  // 抖动：L 叠加 Bayer
-  if(dither&&BAYER[dither]){
-    const m=BAYER[dither],n=m.length,th=m.length,tw=m[0].length;
-    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
-      const t=m[y%th][x%tw]/n-0.5;
-      const i=y*w+x;
-      L[i]=clamp(L[i]+t*(ditherStrength/255*100),0,100);
-    }
-  }
+  const out=new Uint8ClampedArray(h*w*3),m=BAYER[dither];
   const clv=Math.max(2,colorLevels),glv=Math.max(2,grayLevels);
-  for(let i=0;i<h*w;i++){
-    const chroma=Math.sqrt(A[i]*A[i]+B[i]*B[i]);
-    const k=chroma>=5?clv:glv;
-    L[i]=clamp(Math.floor(L[i]/100*k+0.5)/k*100,0,100);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const o=(y*w+x)*3;
+    const r=f32(rgb[o]/255),g=f32(rgb[o+1]/255),b=f32(rgb[o+2]/255);
+    const hi=Math.max(r,g,b),lo=Math.min(r,g,b),base=f32(f32(hi+lo)*0.5);
+    let lightness=base;
+    if(m){const t=m[y%m.length][x%m[0].length]/(m.length*m[0].length)-0.5;
+      lightness=clamp(f32(lightness+f32(t*f32(ditherStrength/255))),0,1);}
+    const k=f32(hi-lo)>f32(8/255)?clv:glv;
+    const target=f32(clamp(Math.floor(lightness*k+0.5)/k,0,1));
+    writeLightness(out,o,r,g,b,base,target);
   }
-  const out=new Float32Array(h*w*3);
-  for(let i=0;i<h*w;i++){const o=i*3;out[o]=L[i];out[o+1]=A[i];out[o+2]=B[i];}
-  return labToRgb(out,h,w);
+  return out;
+}
+function writeLightness(out,o,r,g,b,base,target){
+  const span=Math.min(base,f32(1-base)),targetSpan=Math.min(target,f32(1-target));
+  const scale=span>0?f32(targetSpan/span):0;
+  out[o]=roundEven(f32(clamp(f32(f32(f32(r-base)*scale)+target),0,1)*255));
+  out[o+1]=roundEven(f32(clamp(f32(f32(f32(g-base)*scale)+target),0,1)*255));
+  out[o+2]=roundEven(f32(clamp(f32(f32(f32(b-base)*scale)+target),0,1)*255));
+}
+function restoreColorHue(rgb,reference,h,w){
+  const out=new Uint8ClampedArray(h*w*3);
+  for(let o=0;o<out.length;o+=3){
+    const r=f32(reference[o]/255),g=f32(reference[o+1]/255),b=f32(reference[o+2]/255);
+    const base=f32(f32(Math.max(r,g,b)+Math.min(r,g,b))*0.5);
+    const a=f32(rgb[o]/255),c=f32(rgb[o+1]/255),d=f32(rgb[o+2]/255);
+    const target=f32(f32(Math.max(a,c,d)+Math.min(a,c,d))*0.5);
+    if(Math.max(reference[o],reference[o+1],reference[o+2])-Math.min(reference[o],reference[o+1],reference[o+2])<=8){
+      const gray=roundEven(f32(target*255));out[o]=gray;out[o+1]=gray;out[o+2]=gray;
+    }else writeLightness(out,o,r,g,b,base,target);
+  }
+  return out;
+}
+function cleanColorSpeckles(reference,h,w,strength=2){
+  if(strength<=0)return reference;
+  const n=h*w,hue=new Float64Array(n),colored=new Uint8Array(n),out=reference.slice();
+  for(let i=0;i<n;i++){
+    const o=i*3,r=reference[o],g=reference[o+1],b=reference[o+2];
+    const hi=Math.max(r,g,b),lo=Math.min(r,g,b),delta=hi-lo;
+    colored[i]=delta>8?1:0;const safe=Math.max(delta,1);
+    const angle=hi===r?(g-b)/safe:hi===g?2+(b-r)/safe:4+(r-g)/safe;
+    hue[i]=(angle*60+360)%360;
+  }
+  const similar=(a,b)=>{if(!colored[a])return !colored[b];const d=Math.abs(hue[a]-hue[b]);return colored[b]&&Math.min(d,360-d)<=18;};
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const i=y*w+x;if(!colored[i])continue;
+    const neighbors=[];let support=0;
+    for(let yy=Math.max(0,y-2);yy<Math.min(h,y+3);yy++)for(let xx=Math.max(0,x-2);xx<Math.min(w,x+3);xx++){
+      const j=yy*w+xx;if(j===i)continue;neighbors.push(j);if(similar(i,j))support++;
+    }
+    if(support>=(Number(strength)===1?1:5))continue;
+    let best=-1,bestCount=2,bestDistance=Infinity;
+    for(const j of neighbors){
+      let count=0;for(const k of neighbors)if(similar(j,k))count++;
+      const distance=(Math.floor(j/w)-y)**2+(j%w-x)**2;
+      if(count>=3&&(count>bestCount||(count===bestCount&&distance<bestDistance))){best=j;bestCount=count;bestDistance=distance;}
+    }
+    if(best>=0){out[i*3]=reference[best*3];out[i*3+1]=reference[best*3+1];out[i*3+2]=reference[best*3+2];}
+  }
+  return out;
 }
 
 /* ============================ 降采样 ============================ */
@@ -360,7 +412,7 @@ function contrastDownsample(rgb,h,w,factor,darkTol,mode){
     let k=0;
     for(let dy=0;dy<factor;dy++)for(let dx=0;dx<factor;dx++){
       const o=((by*factor+dy)*w+(bx*factor+dx))*3;
-      const r=rgb[o]/255,g=rgb[o+1]/255,b=rgb[o+2]/255;
+      const r=f32(rgb[o]/255),g=f32(rgb[o+1]/255),b=f32(rgb[o+2]/255);
       lum[k]=Math.fround(lum709(r,g,b));ch[0][k]=r;ch[1][k]=g;ch[2][k]=b;k++;
     }
     const bMed=medCount(lum,N);
@@ -387,11 +439,11 @@ function contrastDownsample(rgb,h,w,factor,darkTol,mode){
     // 色度 median
     const cur=[medCount(ch[0],N),medCount(ch[1],N),medCount(ch[2],N)];
     const curLum=lum709(cur[0],cur[1],cur[2]);
-    const delta=outLum-curLum;
+    const delta=f32(outLum-curLum);
     const oo=(by*pw+bx)*3;
-    out[oo]=clamp((cur[0]+delta)*255,0,255);
-    out[oo+1]=clamp((cur[1]+delta)*255,0,255);
-    out[oo+2]=clamp((cur[2]+delta)*255,0,255);
+    out[oo]=roundEven(f32(clamp(f32(cur[0]+delta),0,1)*255));
+    out[oo+1]=roundEven(f32(clamp(f32(cur[1]+delta),0,1)*255));
+    out[oo+2]=roundEven(f32(clamp(f32(cur[2]+delta),0,1)*255));
   }
   return out;
 }
@@ -412,7 +464,7 @@ function downsampleColor(rgb,h,w,factor,mode){
     const lum=new Float32Array(N);
     for(let dy=0;dy<factor;dy++)for(let dx=0;dx<factor;dx++){
       const o=((by*factor+dy)*W+(bx*factor+dx))*3;
-      lum[dy*factor+dx]=lum709(buf[o],buf[o+1],buf[o+2]);
+      lum[dy*factor+dx]=f32((buf[o]+buf[o+1]+buf[o+2])/3);
     }
     let idx;
     if(mode==='box'||mode==='edge'){ // 均值
@@ -421,7 +473,7 @@ function downsampleColor(rgb,h,w,factor,mode){
         const o=((by*factor+dy)*W+(bx*factor+dx))*3;
         r+=buf[o];g+=buf[o+1];b+=buf[o+2];
       }
-      const oo=(by*pw+bx)*3;out[oo]=Math.round(r/N);out[oo+1]=Math.round(g/N);out[oo+2]=Math.round(b/N);
+      const oo=(by*pw+bx)*3;out[oo]=roundEven(f32(r/N));out[oo+1]=roundEven(f32(g/N));out[oo+2]=roundEven(f32(b/N));
       continue;
     }
     if(mode==='dark')idx=argMin(lum,N);
@@ -432,7 +484,7 @@ function downsampleColor(rgb,h,w,factor,mode){
       for(let i=0;i<N;i++){bMean+=lum[i];if(lum[i]<bMin)bMin=lum[i];if(lum[i]>bMax)bMax=lum[i];}
       bMean/=N;
       const bMed=medCount(lum,N);
-      const skew=bMed-(bMin+bMax)/2;
+      const skew=f32(bMed-f32(f32(bMin+bMax)/2));
       idx=skew<-8?argMin(lum,N):(skew>8?argMax(lum,N):argMedian(lum,N));
     }
     const o=((by*factor+idx/factor|0)*W+(bx*factor+idx%factor))*3;
@@ -442,7 +494,7 @@ function downsampleColor(rgb,h,w,factor,mode){
 }
 function argMin(a,n){let m=0;for(let i=1;i<n;i++)if(a[i]<a[m])m=i;return m;}
 function argMax(a,n){let m=0;for(let i=1;i<n;i++)if(a[i]>a[m])m=i;return m;}
-function argMedian(a,n){const b=Array.from(a.slice(0,n));b.sort((x,y)=>x-y);const v=b[n>>1];for(let i=0;i<n;i++)if(a[i]===v)return i;return n>>1;}
+function argMedian(a,n){return Array.from({length:n},(_,i)=>i).sort((i,j)=>a[i]-a[j])[n>>1];}
 
 /* ============================ 量化 / 抖动 ============================ */
 function nearestPalette(rgb,h,w,palette){
@@ -456,34 +508,110 @@ function nearestPalette(rgb,h,w,palette){
   return out;
 }
 function applyDither(rgb,h,w,pattern,strength){
-  const m=BAYER[pattern];const n=m.length,th=m.length,tw=m[0].length;
+  const m=BAYER[pattern];const n=m.length*m[0].length,th=m.length,tw=m[0].length;
   const out=new Uint8ClampedArray(h*w*3);
   for(let y=0;y<h;y++)for(let x=0;x<w;x++){
     const t=m[y%th][x%tw]/n-0.5;
     const i=y*w+x,o=i*3;
-    const lum0=(rgb[o]+rgb[o+1]+rgb[o+2])/3;
-    const lum1=clamp(lum0+t*strength,0,255);
-    const ratio=lum0>0?lum1/Math.max(lum0,1e-6):1;
-    out[o]=clamp(rgb[o]*ratio,0,255);out[o+1]=clamp(rgb[o+1]*ratio,0,255);out[o+2]=clamp(rgb[o+2]*ratio,0,255);
+    const lum0=f32((rgb[o]+rgb[o+1]+rgb[o+2])/3);
+    const lum1=clamp(f32(lum0+f32(t*f32(strength))),0,255);
+    const ratio=lum0>0?f32(lum1/Math.max(lum0,1e-6)):1;
+    out[o]=Math.trunc(clamp(f32(rgb[o]*ratio),0,255));out[o+1]=Math.trunc(clamp(f32(rgb[o+1]*ratio),0,255));out[o+2]=Math.trunc(clamp(f32(rgb[o+2]*ratio),0,255));
+  }
+  return out;
+}
+
+// Same deterministic masks as core/selective.py; also embedded in the offline worker.
+function accentHSV(c){
+  const hi=Math.max(...c),lo=Math.min(...c),d=hi-lo,safe=Math.max(d,1);
+  const hue=hi===c[0]?(c[1]-c[2])/safe:hi===c[1]?2+(c[2]-c[0])/safe:4+(c[0]-c[1])/safe;
+  return [(hue*60+360)%360,hi?d/hi*100:0,d];
+}
+function accentRGB(hex){return [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16));}
+function accentShade(target,gray){
+  const rgb=target.map(c=>f32(c/255)),base=f32(f32(Math.max(...rgb)+Math.min(...rgb))*.5);
+  const light=f32(f32(f32(Math.max(...gray)/255)+f32(Math.min(...gray)/255))*.5);
+  const out=new Uint8ClampedArray(3);
+  if(Math.max(...target)-Math.min(...target)<=8)out.fill(roundEven(f32(light*255)));
+  else writeLightness(out,0,...rgb,base,light);return out;
+}
+function rasterPaintMask(value,H,W,stride,w,h){
+  const mask=new Uint8Array(H*W);
+  for(const stroke of (value.strokes||[]).slice(0,512)){
+    const pts=stroke.points||[],radius=Math.max(.00001,Math.min(64,Number(stroke.radius??.03)))*Math.min(w,h);
+    for(let k=0;k<pts.length;k++){
+      const a=pts[k],b=pts[Math.min(k+1,pts.length-1)],ax=a[0]*w,ay=a[1]*h,dx=(b[0]-a[0])*w,dy=(b[1]-a[1])*h;
+      const denom=dx*dx+dy*dy;
+      const x0=Math.max(0,Math.floor((Math.min(ax,ax+dx)-radius)/stride)-1),x1=Math.min(W,Math.ceil((Math.max(ax,ax+dx)+radius)/stride)+1);
+      const y0=Math.max(0,Math.floor((Math.min(ay,ay+dy)-radius)/stride)-1),y1=Math.min(H,Math.ceil((Math.max(ay,ay+dy)+radius)/stride)+1);
+      for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){
+        const sx=Math.min(x*stride+Math.floor(stride/2),w-1)+.5,sy=Math.min(y*stride+Math.floor(stride/2),h-1)+.5;
+        const t=denom?clamp(((sx-ax)*dx+(sy-ay)*dy)/denom,0,1):0;
+        if((sx-ax-t*dx)**2+(sy-ay-t*dy)**2<=radius*radius)mask[y*W+x]=stroke.erase!==true?1:0;
+      }
+    }
+  }
+  return mask;
+}
+function applySelectiveColor(gray,source,h,w,factor,downsample,rules){
+  const guide=downsample?downsampleColor(source,h,w,factor,'median'):source;
+  const H=downsample?Math.ceil(h/factor):h,W=downsample?Math.ceil(w/factor):w,stride=downsample?factor:1;
+  const out=new Uint8ClampedArray(gray),hsv=Array.from({length:H*W},(_,i)=>accentHSV(guide.subarray(i*3,i*3+3)));
+  for(const rule of (Array.isArray(rules)?rules:[]).slice(0,12)){
+    if(!rule||rule.enabled===false||!/^#[0-9a-f]{6}$/i.test(rule.source)||!/^#[0-9a-f]{6}$/i.test(rule.target))continue;
+    const reference=accentHSV(accentRGB(rule.source)),ref=reference[0],target=accentRGB(rule.target);
+    if(reference[2]<=8)continue;
+    const tolerance=clamp(Number(rule.tolerance??20),0,90),saturation=clamp(Number(rule.saturation??20),0,100);
+    const dark=clamp(Math.trunc(rule.dark_limit??32),0,128),minimum=clamp(Math.trunc(rule.min_size??2),1,40000000);
+    const region=rule.region,mask=new Uint8Array(H*W);
+    const painted=rule.paint_mask?rasterPaintMask(rule.paint_mask,H,W,stride,w,h):null;
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+      const i=y*W+x,o=i*3,[hue,sat,delta]=hsv[i],d=Math.abs(hue-ref);
+      const sx=(Math.min(x*stride+Math.floor(stride/2),w-1)+.5)/w,sy=(Math.min(y*stride+Math.floor(stride/2),h-1)+.5)/h;
+      if(Math.min(d,360-d)>tolerance||sat<saturation||delta<=8||(gray[o]+gray[o+1]+gray[o+2])/3<=dark)continue;
+      if(region&&!(sx>=region[0]&&sx<region[2]&&sy>=region[1]&&sy<region[3]))continue;
+      if(painted&&!painted[i])continue;
+      const shade=accentShade(target,gray.subarray(o,o+3));
+      if(Math.max(...shade)-Math.min(...shade)<=8)continue;
+      mask[i]=1;
+    }
+    if(minimum>1){
+      const visited=new Uint8Array(H*W),queue=new Int32Array(H*W);
+      for(let i=0;i<mask.length;i++){
+        if(!mask[i]||visited[i])continue;
+        let end=1;queue[0]=i;visited[i]=1;
+        for(let start=0;start<end;start++){
+          const n=queue[start],x=n%W,y=Math.floor(n/W);
+          for(const j of [y>0?n-W:-1,y<H-1?n+W:-1,x>0?n-1:-1,x<W-1?n+1:-1]){
+            if(j>=0&&mask[j]&&!visited[j]){visited[j]=1;queue[end++]=j;}
+          }
+        }
+        if(end<minimum)for(let j=0;j<end;j++)mask[queue[j]]=0;
+      }
+    }
+    for(let i=0;i<mask.length;i++)if(mask[i])out.set(accentShade(target,gray.subarray(i*3,i*3+3)),i*3);
   }
   return out;
 }
 
 /* ============================ 管线 ============================ */
+let expandCache=null,colorGuideCache=null;
 function convert(rgb,h,w,p){
+  if(p.selective_mode)p={...p,color_mode:false,posterize_skip:false};
+  if(p.posterize_levels===1)p={...p,posterize_levels:2};
   // ① 输入与明暗
   let post,lum;
   if(p.posterize_skip||p.color_mode){
     post=new Uint8ClampedArray(rgb);
     lum=rgb2gray(rgb);
   }else if(p.enable_input){
-    lum=desaturateAdjust(rgb,h,w,p.desat,p.gamma,p.brightness,p.contrast);
+    lum=desaturateAdjust(rgb,h,w,p.desat,p.brightness,p.contrast);
   }else{
-    lum=desaturateAdjust(rgb,h,w,p.desat,1,0,0);
+    lum=desaturateAdjust(rgb,h,w,p.desat,0,0);
   }
   // ①彩色模式的明暗调整
   if(p.color_mode&&p.enable_input){
-    post=adjustColor(rgb,h,w,p.gamma,p.brightness,p.contrast);
+    post=adjustColor(rgb,h,w,p.brightness,p.contrast);
   }else if(p.color_mode){
     post=new Uint8ClampedArray(rgb);
   }
@@ -496,13 +624,17 @@ function convert(rgb,h,w,p){
       post=posterizeLum(lum,h,w,p.posterize_levels,p.posterize_mode,steps);
     }else{
       post=new Uint8ClampedArray(h*w*3);
-      for(let i=0;i<h*w;i++){const g=lum[i];const o=i*3;post[o]=g;post[o+1]=g;post[o+2]=g;}
+      for(let i=0;i<h*w;i++){const g=Math.trunc(lum[i]);const o=i*3;post[o]=g;post[o+1]=g;post[o+2]=g;}
     }
   }
   // ③ 轮廓扩展
   let expanded_rgb;
   if(p.enable_outline){
-    [expanded_rgb]=expandOnly(post,h,w,p.patch,p.thickness,p.keep_thin);
+    const key=JSON.stringify([h,w,p.color_mode,p.posterize_skip,p.enable_input,p.desat,
+      p.brightness,p.contrast,p.enable_posterize,p.posterize_levels,p.posterize_mode,
+      p.color_levels,p.palette_kind,p.patch,p.thickness,p.keep_thin]);
+    if(expandCache&&expandCache.src===rgb&&expandCache.key===key)expanded_rgb=expandCache.data;
+    else{[expanded_rgb]=expandOnly(post,h,w,p.patch,p.thickness,p.keep_thin);expandCache={src:rgb,key,data:expanded_rgb};}
   }else{
     expanded_rgb=new Uint8ClampedArray(post);
   }
@@ -511,27 +643,34 @@ function convert(rgb,h,w,p){
   if(p.enable_downsample){
     const padH=(p.factor-h%p.factor)%p.factor,padW=(p.factor-w%p.factor)%p.factor;
     if(p.color_mode){
-      small=downsampleColor(expanded_rgb,h,w,p.factor,p.downsample);  // 内部 pad
+      small=downsampleColor(Uint8Array.from(expanded_rgb,v=>Math.trunc(v)),h,w,p.factor,p.downsample);
     }else{
       const H=h+padH,W=w+padW;
       const buf=new Uint8ClampedArray(H*W*3);
       for(let y=0;y<H;y++)for(let x=0;x<W;x++){
         const yy=clamp(y,0,h-1),xx=clamp(x,0,w-1);
         const o=(y*W+x)*3,so=(yy*w+xx)*3;
-        buf[o]=expanded_rgb[so];buf[o+1]=expanded_rgb[so+1];buf[o+2]=expanded_rgb[so+2];
+        buf[o]=Math.trunc(expanded_rgb[so]);buf[o+1]=Math.trunc(expanded_rgb[so+1]);buf[o+2]=Math.trunc(expanded_rgb[so+2]);
       }
       small=contrastDownsample(buf,H,W,p.factor,p.dark_tol,p.downsample);
     }
   }else{
-    small=new Uint8ClampedArray(expanded_rgb);
+    small=Uint8ClampedArray.from(expanded_rgb,v=>Math.trunc(v));
   }
   // ⑤ 颜色
   const sH=p.enable_downsample?Math.ceil(h/p.factor):h;
   const sW=p.enable_downsample?Math.ceil(w/p.factor):w;
   let final;
   if(p.color_mode){
-    final=quantizeColor(small,sH,sW,p.color_levels,p.posterize_levels,p.dither,p.dither_strength);
-  }else if(p.enable_quantize||p.posterize_skip){
+    final=p.enable_quantize?quantizeColor(small,sH,sW,p.color_levels,p.posterize_levels,p.dither,p.dither_strength):small;
+    const key=JSON.stringify([h,w,p.enable_downsample,p.factor,p.downsample,p.color_cleanup,p.enable_quantize]);
+    if(!colorGuideCache||colorGuideCache.src!==rgb||colorGuideCache.key!==key){
+      let guide=p.enable_downsample?downsampleColor(rgb,h,w,p.factor,p.downsample):rgb;
+      guide=cleanColorSpeckles(guide,sH,sW,p.enable_quantize?(p.color_cleanup??2):0);
+      colorGuideCache={src:rgb,key,data:guide};
+    }
+    final=restoreColorHue(final,colorGuideCache.data,sH,sW);
+  }else if(p.enable_quantize){
     if(p.dither!=='none')small=applyDither(small,sH,sW,p.dither,p.dither_strength);
     if(p.no_quantize){
       final=small;
@@ -540,7 +679,7 @@ function convert(rgb,h,w,p){
       final=nearestPalette(small,sH,sW,pal);
     }
   }else{
-    if(p.enable_posterize){
+    if(p.enable_posterize&&!p.posterize_skip){
       const steps=posterizeSteps(p.posterize_levels,p.posterize_mode,grayRgb(p.palette_kind));
       final=new Uint8ClampedArray(sH*sW*3);
       for(let i=0;i<sH*sW;i++){
@@ -551,18 +690,21 @@ function convert(rgb,h,w,p){
       }
     }else final=small;
   }
+  if(p.selective_mode)final=applySelectiveColor(final,rgb,h,w,p.factor,p.enable_downsample,p.accent_rules||[]);
   return {final,outW:sW,outH:sH};
 }
+</script>
+<script>
 
 /* ============================ 预设 / 参数 ============================ */
 const PRESETS={
-  character:{posterize_skip:false,color_mode:false,desat:'hsl',gamma:1,brightness:0,contrast:0,
-    posterize_levels:4,color_levels:12,posterize_mode:'ps',patch:2,thickness:1,keep_thin:false,
+  character:{posterize_skip:false,color_mode:false,desat:'hsl',brightness:0,contrast:0,
+    posterize_levels:4,color_levels:12,color_cleanup:2,selective_mode:false,accent_rules:[],posterize_mode:'ps',patch:2,thickness:1,keep_thin:false,
     factor:4,downsample:'bridge',dark_tol:0.06,palette_kind:'character',quantize_levels:4,
     no_quantize:false,dither:'none',dither_strength:24,
     enable_input:true,enable_posterize:true,enable_outline:true,enable_downsample:true,enable_quantize:true},
-  scene:{posterize_skip:false,color_mode:false,desat:'hsl',gamma:1,brightness:0,contrast:0,
-    posterize_levels:4,color_levels:12,posterize_mode:'ps',patch:2,thickness:1,keep_thin:false,
+  scene:{posterize_skip:false,color_mode:false,desat:'hsl',brightness:0,contrast:0,
+    posterize_levels:4,color_levels:12,color_cleanup:2,selective_mode:false,accent_rules:[],posterize_mode:'ps',patch:2,thickness:1,keep_thin:false,
     factor:2,downsample:'bridge',dark_tol:0.06,palette_kind:'scene',quantize_levels:0,
     no_quantize:false,dither:'none',dither_strength:24,
     enable_input:true,enable_posterize:true,enable_outline:true,enable_downsample:true,enable_quantize:true}
@@ -571,7 +713,6 @@ const GROUPS=[
   {title:'① 输入与明暗',enableKey:'enable_input',items:[
     {k:'color_mode',t:'bool',label:'保留彩色（不黑白化）',help:'勾选后跳过黑白化，输出彩色像素图'},
     {k:'desat',t:'select',label:'黑白化算法',opts:[['hsl','HSL（和 PS 一致）'],['rec709','Rec.709（旧）']]},
-    {k:'gamma',t:'range',label:'明暗曲线（Gamma）',min:-1,max:1,step:0.02,logbase:3,help:'左暗右亮，0 为中性'},
     {k:'brightness',t:'range',label:'整体亮度',min:-150,max:150,step:1},
     {k:'contrast',t:'range',label:'整体对比度',min:-100,max:100,step:1},
   ]},
@@ -587,6 +728,7 @@ const GROUPS=[
     {k:'dark_tol',t:'range',label:'暗线保留强度',min:0,max:0.5,step:0.01},
   ]},
   {title:'⑤ 颜色',enableKey:'enable_quantize',items:[
+    {k:'palette_kind',t:'select',label:'调色板',opts:[['character','角色灰阶'],['scene','场景灰阶']]},
     {k:'quantize_levels',t:'range',label:'颜色数',min:0,max:8,step:1},
     {k:'no_quantize',t:'bool',label:'不强制套调色板'},
   ]},
@@ -605,7 +747,149 @@ let toastTimer=null;
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2200);}
 
 /* ============================ 控件 ============================ */
+// Shared controls, embedded verbatim in pixcelOE.html for file:// use.
+let accentTool=null,accentDrag=null,accentOverlay=null,accentPaintOverlay=null,accentBrushSize=24;
+function refreshAccentOverlay(){
+  const editing=accentTool&&['paint','erase'].includes(accentTool.mode)&&state.view==='original';
+  if(!editing){if(accentPaintOverlay)accentPaintOverlay.style.display='none';return;}
+  const img=document.getElementById('img-original'),r=img.getBoundingClientRect();
+  if(!accentPaintOverlay){accentPaintOverlay=document.createElement('canvas');accentPaintOverlay.style.cssText='position:fixed;pointer-events:none;z-index:8';document.body.append(accentPaintOverlay);}
+  const cv=accentPaintOverlay;cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+  Object.assign(cv.style,{display:'block',left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px'});
+  const ctx=cv.getContext('2d'),rule=(state.params.accent_rules||[])[accentTool.index];
+  const strokes=[...(rule?.paint_mask?.strokes||[])];if(accentDrag?.stroke)strokes.push(accentDrag.stroke);
+  for(const stroke of strokes){
+    ctx.globalCompositeOperation=stroke.erase?'destination-out':'source-over';ctx.strokeStyle=ctx.fillStyle='#c040ff88';
+    ctx.lineWidth=stroke.radius*Math.min(cv.width,cv.height)*2;ctx.lineCap=ctx.lineJoin='round';
+    const pts=stroke.points;if(!pts.length)continue;
+    if(pts.length===1){ctx.beginPath();ctx.arc(pts[0][0]*cv.width,pts[0][1]*cv.height,ctx.lineWidth/2,0,Math.PI*2);ctx.fill();}
+    else{ctx.beginPath();ctx.moveTo(pts[0][0]*cv.width,pts[0][1]*cv.height);for(const p of pts.slice(1))ctx.lineTo(p[0]*cv.width,p[1]*cv.height);ctx.stroke();}
+  }
+}
+function cancelAccentSelection(){
+  accentTool=null;accentDrag=null;
+  if(accentOverlay)accentOverlay.style.display='none';
+  if(accentPaintOverlay)accentPaintOverlay.style.display='none';
+  const img=document.getElementById('img-original');if(img)img.style.cursor='';
+}
+function updateAccent(index,key,value){
+  const rules=(state.params.accent_rules||[]).map((r,i)=>i===index?{...r,[key]:value}:r);
+  setParam('accent_rules',rules);
+}
+function buildAccentControls(host){
+  const sec=document.createElement('div');sec.className='group';sec.dataset.k='selective_mode';
+  const label=document.createElement('label');label.className='chk';
+  const toggle=document.createElement('input');toggle.type='checkbox';toggle.checked=!!state.params.selective_mode;
+  toggle.onchange=()=>{
+    state.params.selective_mode=toggle.checked;
+    if(toggle.checked){state.params.color_mode=false;state.params.posterize_skip=false;}
+    accentTool=null;buildControls();scheduleRender();
+  };
+  label.append(toggle,document.createTextNode(' ⑥ 抽色艺术（保留灰阶明度）'));sec.append(label);host.append(sec);
+  if(!toggle.checked){cancelAccentSelection();return;}
+  sec.append(helpEl('输出色相与灰阶明度结合。框选、画笔遮罩与原图颜色筛选共同生效；涂过的区域允许抽色，未涂区域保持灰阶。'));
+  const rules=state.params.accent_rules||[];
+  rules.forEach((rule,index)=>{
+    const card=document.createElement('div');card.className='accent-rule';card.dataset.rule=index;
+    card.style.cssText='border:1px solid #444;border-radius:6px;padding:10px;margin-top:10px';
+    const heading=document.createElement('label'),enabled=document.createElement('input');enabled.type='checkbox';enabled.checked=rule.enabled!==false;
+    enabled.onchange=()=>updateAccent(index,'enabled',enabled.checked);heading.append(enabled,document.createTextNode(' 色块 '+(index+1)));card.append(heading);
+    const button=(text,fn)=>{const b=document.createElement('button');b.type='button';b.className='btn';b.textContent=text;b.onclick=fn;return b;};
+    const colors=document.createElement('div');colors.style.cssText='display:flex;gap:12px;margin:8px 0';
+    for(const [key,text] of [['source','原图颜色'],['target','输出色相']]){
+      const lab=document.createElement('label');lab.textContent=text+' ';const input=document.createElement('input');input.type='color';input.value=rule[key];input.dataset.accent=key;
+      input.oninput=()=>updateAccent(index,key,input.value);lab.append(input);colors.append(lab);
+    }
+    card.append(colors);
+    const arm=mode=>{
+      if(!state.srcW){toast('请先导入图片');return;}
+      cancelAccentSelection();
+      accentTool={index,mode};state.view='original';state.zoom='fit';applyView();
+      document.getElementById('img-original').style.cursor='crosshair';
+      document.querySelectorAll('#zoom button').forEach(b=>b.classList.toggle('on',b.dataset.z==='fit'));
+      refreshAccentOverlay();
+      toast(mode==='pick'?'点击原图取色':mode==='rect'?'在原图拖动框选作用范围':'在原图涂抹，完成后点击“完成遮罩”');
+    };
+    card.append(button('从原图取色',()=>arm('pick')),button('框选范围',()=>arm('rect')));
+    const region=document.createElement('div');region.className='help';region.textContent=rule.region?'框选：'+rule.region.map(v=>Math.round(v*100)+'%').join(' / '):'范围：整张原图';card.append(region);
+    if(rule.region)card.append(button('清除框选',()=>{updateAccent(index,'region',null);buildControls();}));
+    const maskInfo=document.createElement('div');maskInfo.className='help';maskInfo.textContent=rule.paint_mask?'画笔遮罩：'+rule.paint_mask.strokes.length+' 笔（遮罩外保持灰阶）':'画笔遮罩：未启用';card.append(maskInfo);
+    card.append(button('画笔绘制遮罩',()=>arm('paint')),button('橡皮擦',()=>arm('erase')));
+    const brush=document.createElement('label');brush.style.display='block';brush.textContent='画笔半径（原图像素） ';
+    const size=document.createElement('input');size.type='number';size.min=1;size.max=512;size.value=accentBrushSize;size.dataset.accent='brush_size';size.style.width='72px';
+    size.oninput=()=>{accentBrushSize=Math.max(1,Math.min(512,Number(size.value)||1));};brush.append(size);card.append(brush);
+    card.append(button('完成遮罩',()=>{cancelAccentSelection();state.view='result';applyView();}),button('撤销一笔',()=>{const mask=state.params.accent_rules[index].paint_mask;if(mask){updateAccent(index,'paint_mask',{strokes:mask.strokes.slice(0,-1)});buildControls();refreshAccentOverlay();}}));
+    if(rule.paint_mask)card.append(button('清除遮罩',()=>{cancelAccentSelection();updateAccent(index,'paint_mask',null);buildControls();}));
+    for(const [key,text,min,max,def] of [['tolerance','色相容差（度）',0,90,20],['saturation','最低饱和度（%）',0,100,20],['dark_limit','黑线保护（越大保护越多）',0,128,32],['min_size','最小连通色块（输出像素数）',1,4096,2]]){
+      const lab=document.createElement('label');lab.style.cssText='display:block;margin-top:8px';
+      const value=document.createElement('span');value.textContent=rule[key]??def;lab.append(document.createTextNode(text+' '),value);
+      const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step=1;input.value=rule[key]??def;input.dataset.accent=key;
+      input.oninput=()=>{value.textContent=input.value;updateAccent(index,key,Number(input.value));};card.append(lab,input);
+      if(key==='min_size'){
+        const number=document.createElement('input');number.type='number';number.min=1;number.max=40000000;number.value=rule[key]??def;number.dataset.accent='min_size_number';number.style.width='100px';
+        number.oninput=()=>{const n=Math.max(1,Math.min(40000000,Math.trunc(Number(number.value)||1)));value.textContent=n;input.value=n;updateAccent(index,key,n);};
+        input.addEventListener('input',()=>number.value=input.value);card.append(number,helpEl('小于此面积的可见连通色块会被去除；相连的不同明度属于同一块。大色块可直接输入更大数值。'));
+      }
+    }
+    card.append(button('删除此规则',()=>{cancelAccentSelection();setParam('accent_rules',(state.params.accent_rules||[]).filter((_,i)=>i!==index));buildControls();}));sec.append(card);
+  });
+  const add=document.createElement('button');add.className='btn';add.textContent='＋ 添加抽色规则';add.disabled=rules.length>=12;
+  add.onclick=()=>{setParam('accent_rules',[...(state.params.accent_rules||[]),{source:'#35A7B4',target:'#35A7B4',tolerance:20,saturation:20,dark_limit:32,min_size:2,region:null,enabled:true}]);buildControls();};sec.append(add);
+  installAccentSelection();
+}
+function installAccentSelection(){
+  const img=document.getElementById('img-original');if(img.dataset.accentInstalled)return;img.dataset.accentInstalled='1';
+  window.addEventListener('keydown',e=>{if(e.key==='Escape'&&accentTool){cancelAccentSelection();toast('已取消取色或框选');}});
+  window.addEventListener('resize',refreshAccentOverlay);
+  window.addEventListener('scroll',refreshAccentOverlay,true);
+  const point=e=>{const r=img.getBoundingClientRect();return [Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))];};
+  const overlay=region=>{
+    if(!accentOverlay){accentOverlay=document.createElement('div');accentOverlay.style.cssText='position:fixed;border:2px dashed #b2a4ff;background:#8070ff22;pointer-events:none;z-index:8';document.body.append(accentOverlay);}
+    const r=img.getBoundingClientRect();Object.assign(accentOverlay.style,{display:'block',left:r.left+region[0]*r.width+'px',top:r.top+region[1]*r.height+'px',width:(region[2]-region[0])*r.width+'px',height:(region[3]-region[1])*r.height+'px'});
+  };
+  img.addEventListener('mousedown',e=>{if(accentTool){e.preventDefault();e.stopPropagation();}},true);
+  img.addEventListener('pointerdown',e=>{
+    if(!accentTool||e.button!==0)return;e.preventDefault();e.stopPropagation();
+    const pos=point(e);
+    if(accentTool.mode==='pick'){
+      const cv=document.createElement('canvas');cv.width=img.naturalWidth;cv.height=img.naturalHeight;const ctx=cv.getContext('2d');ctx.drawImage(img,0,0);
+      const rgb=ctx.getImageData(Math.min(cv.width-1,Math.floor(pos[0]*cv.width)),Math.min(cv.height-1,Math.floor(pos[1]*cv.height)),1,1).data;
+      if(Math.max(...rgb.slice(0,3))-Math.min(...rgb.slice(0,3))<=8){toast('此处接近灰色，请点击彩色部分取色');return;}
+      const hex='#'+Array.from(rgb.slice(0,3),v=>v.toString(16).padStart(2,'0')).join('');
+      updateAccent(accentTool.index,'source',hex);cancelAccentSelection();buildControls();state.view='result';applyView();toast('已取色，已切回成品');return;
+    }
+    if(['paint','erase'].includes(accentTool.mode)){
+      const rule=state.params.accent_rules[accentTool.index];
+      if((rule.paint_mask?.strokes.length||0)>=512){toast('笔画已达上限，请清除或撤销后重画');return;}
+      accentDrag={index:accentTool.index,pointer:e.pointerId,stroke:{erase:accentTool.mode==='erase',radius:accentBrushSize/Math.min(img.naturalWidth,img.naturalHeight),points:[pos]}};
+      img.setPointerCapture(e.pointerId);refreshAccentOverlay();return;
+    }
+    accentDrag={start:pos,index:accentTool.index,pointer:e.pointerId};img.setPointerCapture(e.pointerId);overlay([...pos,...pos]);
+  },true);
+  img.addEventListener('pointermove',e=>{
+    if(!accentDrag)return;
+    if(accentDrag.stroke){const b=point(e),pts=accentDrag.stroke.points,a=pts[pts.length-1];if(pts.length<4095&&Math.hypot((a[0]-b[0])*img.naturalWidth,(a[1]-b[1])*img.naturalHeight)>=Math.max(1,accentBrushSize/4))pts.push(b);refreshAccentOverlay();return;}
+    const a=accentDrag.start,b=point(e);overlay([Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[0],b[0]),Math.max(a[1],b[1])]);
+  });
+  const finish=e=>{
+    if(!accentDrag)return;
+    if(accentDrag.stroke){
+      const index=accentDrag.index,stroke=accentDrag.stroke;stroke.points.push(point(e));
+      if(img.hasPointerCapture(accentDrag.pointer))img.releasePointerCapture(accentDrag.pointer);
+      accentDrag=null;const rule=state.params.accent_rules[index];updateAccent(index,'paint_mask',{strokes:[...(rule.paint_mask?.strokes||[]),stroke]});buildControls();refreshAccentOverlay();return;
+    }
+    const a=accentDrag.start,b=point(e),index=accentDrag.index;
+    if(img.hasPointerCapture(accentDrag.pointer))img.releasePointerCapture(accentDrag.pointer);
+    cancelAccentSelection();
+    const rect=[Math.min(a[0],b[0]),Math.min(a[1],b[1]),Math.max(a[0],b[0]),Math.max(a[1],b[1])];
+    if(rect[2]>rect[0]&&rect[3]>rect[1]){updateAccent(index,'region',rect);buildControls();toast('框选已保存，切换结果查看效果');}
+  };
+  img.addEventListener('pointerup',finish);
+  img.addEventListener('pointercancel',cancelAccentSelection);
+}
+
 function buildControls(){
+  delete state.params.gamma;
   const host=$('#controls');host.innerHTML='';
   for(const g of GROUPS){
     const sec=document.createElement('div');sec.className='group';
@@ -619,14 +903,17 @@ function buildControls(){
     let items=g.items;
     if(g.enableKey==='enable_posterize'){
       items=state.params.color_mode
-        ?[{k:'color_levels',t:'range',label:'色彩层数（彩色明度档数）',min:2,max:12,step:1},
-          {k:'posterize_levels',t:'range',label:'灰阶层数（灰色明度档数）',min:2,max:8,step:1},...DITHER_ITEMS]
+        ?[{k:'color_levels',t:'range',label:'色彩层数（彩色明度档数）',min:2,max:12,step:1,help:'只调整明暗层次，色相跟随原图对应色块'},
+          {k:'posterize_levels',t:'range',label:'灰阶层数（灰色明度档数）',min:2,max:8,step:1}]
         :[{k:'posterize_levels',t:'range',label:'灰阶层数',min:0,max:8,step:1},
-          {k:'posterize_mode',t:'select',label:'分层方式',opts:[['ps','和 PS 一致'],['palette','按调色板范围']]},...DITHER_ITEMS];
+          {k:'posterize_mode',t:'select',label:'分层方式',opts:[['ps','和 PS 一致'],['palette','按调色板范围']]}];
     }
+    if(g.enableKey==='enable_quantize')items=state.params.color_mode?
+      [{k:'color_cleanup',t:'select',label:'边缘杂色清理',opts:[['0','关闭'],['1','轻度（保留小装饰）'],['2','标准（边缘更干净）']],help:'清理邻域不支持的稀有色相；可能影响 1–2 像素小装饰，可关闭'},...DITHER_ITEMS]:[...g.items,...DITHER_ITEMS];
     for(const it of items)sec.appendChild(buildField(it));
     host.appendChild(sec);
   }
+  buildAccentControls(host);
 }
 function buildField(it){
   const wrap=document.createElement('div');wrap.className='field';wrap.dataset.k=it.k;
@@ -634,7 +921,7 @@ function buildField(it){
   if(it.t==='bool'){
     const lab=document.createElement('label');lab.className='chk';
     const cb=document.createElement('input');cb.type='checkbox';cb.checked=!!v;
-    cb.addEventListener('change',()=>{setParam(it.k,cb.checked);if(it.k==='color_mode')buildControls();});
+    cb.addEventListener('change',()=>{if(it.k==='color_mode'&&cb.checked)state.params.selective_mode=false;setParam(it.k,cb.checked);if(it.k==='color_mode')buildControls();});
     lab.appendChild(cb);lab.appendChild(document.createTextNode(' '+it.label));
     wrap.appendChild(lab);if(it.help)wrap.appendChild(helpEl(it.help));return wrap;
   }
@@ -649,7 +936,9 @@ function buildField(it){
     inp.addEventListener('input',()=>{
       const dv=parseFloat(inp.value);
       const actual=it.logbase?Math.pow(it.logbase,dv):dv;
-      val.textContent=fmt(actual);setParam(it.k,actual);
+      const value=it.k==='posterize_levels'&&actual===1?2:actual;
+      if(value!==actual)inp.value=value;
+      val.textContent=fmt(value);setParam(it.k,value);
     });
     wrap.appendChild(inp);if(it.help)wrap.appendChild(helpEl(it.help));return wrap;
   }
@@ -662,49 +951,122 @@ function buildField(it){
   return wrap;
 }
 function helpEl(t){const d=document.createElement('div');d.className='help';d.textContent=t;return d;}
-function setParam(k,v){state.params[k]=v;if(k!=='color_mode')scheduleRender();}
+function setParam(k,v){state.params[k]=v;scheduleRender();}
 let renderTimer=null;
-function scheduleRender(){clearTimeout(renderTimer);renderTimer=setTimeout(renderNow,120);}
+function scheduleRender(){clearTimeout(renderTimer);renderTimer=setTimeout(()=>{renderTimer=null;renderNow();},120);}
 
 /* ============================ 渲染 ============================ */
+let worker=null,workerBusy=false,workerSource=null,renderRevision=0,renderPending=false;
+let renderWaiters=[],uploadRevision=0;
+function ensureWorker(){
+  if(worker)return;
+  const source=document.getElementById('pipeline-code').textContent+`
+    let sourceRgb;
+    self.onmessage=({data:m})=>{
+      try{
+        if(m.rgb)sourceRgb=m.rgb;
+        const t0=performance.now(),r=convert(sourceRgb,m.h,m.w,m.params);
+        self.postMessage({...r,revision:m.revision,ms:Math.round(performance.now()-t0)},[r.final.buffer]);
+      }catch(e){self.postMessage({revision:m.revision,error:e.message});}
+    };`;
+  const url=URL.createObjectURL(new Blob([source],{type:'text/javascript'}));
+  try{worker=new Worker(url);}finally{URL.revokeObjectURL(url);}
+  worker.onmessage=({data:r})=>{
+    workerBusy=false;
+    if(r.revision===renderRevision){
+      if(r.error){state.finalData=null;$('#st-warn').textContent=r.error;toast('转换失败：'+r.error);}
+      else commitRender(r);
+    }
+    if(renderPending)dispatchRender();
+    else{
+      $('#busy').classList.add('hidden');
+      $('#btn-export').disabled=!state.finalData;
+      const waiters=renderWaiters;renderWaiters=[];waiters.forEach(resolve=>resolve(!r.error));
+    }
+  };
+  worker.onerror=e=>{
+    worker.terminate();worker=null;workerBusy=false;workerSource=null;renderPending=false;state.finalData=null;
+    $('#busy').classList.add('hidden');$('#st-warn').textContent='后台计算失败，请重新调整参数';
+    const waiters=renderWaiters;renderWaiters=[];waiters.forEach(resolve=>resolve(false));
+    toast(e.message||'后台计算失败');
+  };
+}
+function dispatchRender(){
+  if(workerBusy||!renderPending)return;
+  try{
+    ensureWorker();
+    const message={revision:renderRevision,h:state.srcH,w:state.srcW,params:{...state.params}};
+    if(workerSource!==state.srcData){message.rgb=state.srcData;workerSource=state.srcData;}
+    workerBusy=true;renderPending=false;worker.postMessage(message);
+  }catch(e){
+    workerBusy=false;renderPending=false;$('#busy').classList.add('hidden');toast('无法启动计算：'+e.message);
+    const waiters=renderWaiters;renderWaiters=[];waiters.forEach(resolve=>resolve(false));
+  }
+}
 function renderNow(){
-  if(!state.srcData)return;
-  const t0=performance.now();
-  const r=convert(state.srcData,state.srcH,state.srcW,state.params);
+  clearTimeout(renderTimer);renderTimer=null;
+  if(!state.srcData)return Promise.resolve(false);
+  renderRevision++;renderPending=true;
+  $('#busy').classList.remove('hidden');$('#btn-export').disabled=true;
+  const promise=new Promise(resolve=>renderWaiters.push(resolve));
+  dispatchRender();return promise;
+}
+function commitRender(r){
   state.outW=r.outW;state.outH=r.outH;state.finalData=r.final;
   const img=$('#img-result');
   img.width=state.outW;img.height=state.outH;
-  const cv=document.createElement('canvas');cv.width=state.outW;cv.height=state.outH;
-  const ctx=cv.getContext('2d');
-  const id=ctx.createImageData(state.outW,state.outH);
-  id.data.set(r.final);ctx.putImageData(id,0,0);
+  const cv=toCanvas(r.final,state.outW,state.outH);
   img.src=cv.toDataURL();
-  const ms=Math.round(performance.now()-t0);
   $('#st-size').textContent=`${state.srcW}×${state.srcH} → ${state.outW}×${state.outH}`;
-  $('#st-time').textContent=`耗时 ${ms}ms`;
-  $('#st-check').innerHTML='<span class="ok">验收 ✓ 3/3</span>';
+  $('#st-time').textContent=`耗时 ${r.ms}ms`;
+  state.report=validateOutput(r.final,state.params);
+  const passed=state.report.checks.filter(c=>c.pass).length,total=state.report.checks.length;
+  $('#st-check').textContent=`验收 ${state.report.pass?'✓':'✗'} ${passed}/${total}`;
+  $('#st-check').className=state.report.pass?'ok':'bad';
+  $('#st-check').title=state.report.checks.map(c=>`${c.label}：${c.detail}`).join('\n');
   $('#st-warn').textContent='';
-  $('#btn-export').disabled=false;
   applyView();
+}
+function validateOutput(data,p){
+  const allowed=new Set(grayRgb(p.palette_kind).map(c=>c.join(',')));
+  const accents=new Set((p.selective_mode?(p.accent_rules||[]):[]).filter(r=>r.enabled!==false).flatMap(r=>grayRgb(p.palette_kind).map(g=>Array.from(accentShade(accentRGB(r.target),g)).join(','))));
+  let outside=0,colorPixels=0,unregistered=0;const colors=new Map();
+  for(let i=0;i<data.length;i+=3){
+    const c=[data[i],data[i+1],data[i+2]],key=c.join(',');colors.set(key,(colors.get(key)||0)+1);
+    if(!allowed.has(key)&&!accents.has(key))outside++;
+    if(Math.max(...c)-Math.min(...c)>8){colorPixels++;if(!accents.has(key))unregistered++;}
+  }
+  const checks=[
+    {name:'alpha',label:'边缘无半透明',pass:true,detail:'输出 alpha 全部为 255'},
+    {name:'palette',label:'用色符合灰阶与抽色规则',pass:outside===0,detail:`灰阶之外 ${outside} 像素`},
+    {name:'hardness',label:'无杂色',pass:unregistered===0,detail:`非指定彩色 ${unregistered} 像素；抽色 ${colorPixels} 像素`}
+  ];
+  return {pass:checks.every(c=>c.pass),checks,details:{unique_colors:colors.size,accent_pixels:colorPixels,accent_ratio:colorPixels/(data.length/3),
+    colors:[...colors].map(([rgb,px])=>({rgb:rgb.split(',').map(Number),px}))}};
 }
 
 /* ============================ 上传 ============================ */
 async function upload(file){
-  if(!file)return;
-  const bmp=await createImageBitmap(file);
-  const cv=document.createElement('canvas');cv.width=bmp.width;cv.height=bmp.height;
-  const ctx=cv.getContext('2d');ctx.drawImage(bmp,0,0);
-  const data=ctx.getImageData(0,0,bmp.width,bmp.height).data;  // RGBA(4 通道)
-  // 转 RGB(3 通道)
-  const rgb=new Uint8ClampedArray(bmp.width*bmp.height*3);
-  for(let i=0,j=0;i<data.length;i+=4,j+=3){rgb[j]=data[i];rgb[j+1]=data[i+1];rgb[j+2]=data[i+2];}
-  state.srcW=bmp.width;state.srcH=bmp.height;
-  state.srcData=rgb;
-  state.files=[file];
-  $('#img-original').src=URL.createObjectURL(file);
-  $('#drop-hint').classList.add('hidden');$('#views').classList.remove('hidden');
-  toast(`已载入 ${bmp.width}×${bmp.height}`);
-  renderNow();
+  if(!file)return false;
+  const revision=++uploadRevision;let bmp;
+  try{
+    if(file.size>64*1024*1024)throw new Error('图片超过 64 MB');
+    bmp=await createImageBitmap(file);
+    if(revision!==uploadRevision)return false;
+    if(bmp.width*bmp.height>40000000)throw new Error('图片超过 4000 万像素');
+    const cv=document.createElement('canvas');cv.width=bmp.width;cv.height=bmp.height;
+    const ctx=cv.getContext('2d');ctx.drawImage(bmp,0,0);
+    const data=ctx.getImageData(0,0,bmp.width,bmp.height).data;
+    const rgb=new Uint8ClampedArray(bmp.width*bmp.height*3);
+    for(let i=0,j=0;i<data.length;i+=4,j+=3){rgb[j]=data[i];rgb[j+1]=data[i+1];rgb[j+2]=data[i+2];}
+    state.srcW=bmp.width;state.srcH=bmp.height;state.srcData=rgb;state.finalData=null;
+    if(state.originalUrl)URL.revokeObjectURL(state.originalUrl);
+    state.originalUrl=URL.createObjectURL(file);$('#img-original').src=state.originalUrl;
+    $('#drop-hint').classList.add('hidden');$('#views').classList.remove('hidden');
+    toast(`已载入 ${bmp.width}×${bmp.height}`);
+    return await renderNow();
+  }catch(e){toast('无法载入图片：'+e.message);return false;}
+  finally{if(bmp)bmp.close();}
 }
 
 /* ============================ 视图 / 缩放 ============================ */
@@ -712,6 +1074,7 @@ function applyView(){
   const views=$('#views');views.className='views '+state.view;
   $$('#view-mode button').forEach(b=>b.classList.toggle('on',b.dataset.v===state.view));
   applyZoom();
+  refreshAccentOverlay();
 }
 function applyZoom(){
   const oImg=$('#img-original'),rImg=$('#img-result');
@@ -732,24 +1095,48 @@ function applyZoom(){
   }
   rImg.style.width=state.outW*zR+'px';rImg.style.height=state.outH*zR+'px';
   oImg.style.width=state.srcW*zO+'px';oImg.style.height=state.srcH*zO+'px';
+  updateGrid(zR);
+}
+function updateGrid(z){
+  const host=$('#view-result');let grid=host.querySelector('.grid-overlay');
+  if(!grid){grid=document.createElement('div');grid.className='grid-overlay';host.appendChild(grid);}
+  grid.classList.toggle('hidden',!state.grid||z<3);
+  grid.style.backgroundImage='linear-gradient(to right,rgba(124,108,255,.35) 1px,transparent 1px),linear-gradient(to bottom,rgba(124,108,255,.35) 1px,transparent 1px)';
+  grid.style.backgroundSize=`${z}px ${z}px`;
 }
 function tag(v,t){let e=v.querySelector('.tag');if(!e){e=document.createElement('span');e.className='tag';v.appendChild(e);}e.textContent=t;}
 
 /* ============================ 导出 ============================ */
 function toCanvas(data,w,h){
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
-  const ctx=cv.getContext('2d');const id=ctx.createImageData(w,h);id.data.set(data);ctx.putImageData(id,0,0);return cv;
+  const ctx=cv.getContext('2d');const id=ctx.createImageData(w,h);
+  for(let i=0,j=0;i<data.length;i+=3,j+=4){id.data[j]=data[i];id.data[j+1]=data[i+1];id.data[j+2]=data[i+2];id.data[j+3]=255;}
+  ctx.putImageData(id,0,0);return cv;
 }
-function download(cv,name){
-  cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);});
+function downloadBlob(blob,name){
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function download(cv,name){return new Promise((resolve,reject)=>cv.toBlob(b=>{if(!b){reject(new Error('无法编码 PNG'));return;}downloadBlob(b,name);resolve();},'image/png'));}
+function askExportScale(){
+  const answer=prompt('放大倍数（1/2/4/8，默认 4）：','4');
+  if(answer===null)return null;
+  const scale=Number(answer);
+  if(!Number.isInteger(scale)||scale<1||scale>8){toast('请输入 1 到 8 的整数倍数');return null;}
+  return scale;
+}
+async function exportCurrent(sc,name){
+  const cv=toCanvas(state.finalData,state.outW,state.outH);let output=cv;
+  if(sc>1){output=document.createElement('canvas');output.width=state.outW*sc;output.height=state.outH*sc;const cx=output.getContext('2d');cx.imageSmoothingEnabled=false;cx.drawImage(cv,0,0,output.width,output.height);}
+  const metadata={params:{...state.params},input_size:[state.srcW,state.srcH],output_size:[state.outW,state.outH],scale:sc,validate:state.report};
+  await download(output,`${name}.png`);
+  downloadBlob(new Blob([JSON.stringify(metadata,null,2)],{type:'application/json'}),`${name}.json`);
 }
 async function doExport(){
-  if(!state.finalData)return;
-  const scale=parseInt(prompt('放大倍数（1/2/4/8，默认 4）：','4'),10)||4;
-  const sc=Math.max(1,Math.min(8,scale));
-  const cv=toCanvas(state.finalData,state.outW,state.outH);
-  if(sc>1){const c2=document.createElement('canvas');c2.width=state.outW*sc;c2.height=state.outH*sc;const cx=c2.getContext('2d');cx.imageSmoothingEnabled=false;cx.drawImage(cv,0,0,c2.width,c2.height);download(c2,`pixel_${Date.now()}.png`);}
-  else download(cv,`pixel_${Date.now()}.png`);
+  if(!state.srcData||state.batching)return;
+  const sc=askExportScale();if(sc===null)return;
+  if(!await renderNow())return;
+  await exportCurrent(sc,`pixel_${Date.now()}`);
   toast('已导出');
 }
 
@@ -757,17 +1144,25 @@ async function doExport(){
 function bind(){
   $('#btn-pick').addEventListener('click',()=>$('#file').click());
   $('#file').addEventListener('change',e=>{
+    if(state.batching)return;
     const files=Array.from(e.target.files||[]);if(!files.length)return;
-    state.files=files;upload(files[0]);
+    state.files=files;upload(files[0]);e.target.value='';
     if(files.length>1)toast(`已载入 ${files.length} 张图，可点批量导出`);
   });
   $('#drop-hint').addEventListener('click',e=>{if(e.target.id!=='btn-pick')$('#file').click();});
   window.addEventListener('dragover',e=>e.preventDefault());
   window.addEventListener('drop',e=>{
-    e.preventDefault();const files=e.dataTransfer&&e.dataTransfer.files;
+    e.preventDefault();if(state.batching)return;const files=e.dataTransfer&&e.dataTransfer.files;
     if(files&&files.length){state.files=Array.from(files);upload(files[0]);if(files.length>1)toast(`已载入 ${files.length} 张图`);}
   });
-  $('#preset').addEventListener('change',e=>{state.params={...PRESETS[e.target.value]};buildControls();scheduleRender();});
+  $('#preset').addEventListener('change',e=>{const p=PRESETS[e.target.value]||customPresets[e.target.value];if(!p)return;state.params={...PRESETS.character,...p};buildControls();scheduleRender();});
+  $('#btn-save-preset').addEventListener('click',()=>{
+    const answer=prompt('预设名称：','我的预设');if(answer===null||!answer.trim())return;
+    const key='custom:'+answer.trim();customPresets[key]={...state.params};
+    try{localStorage.setItem('pixceloe_standalone_presets',JSON.stringify(customPresets));}
+    catch(e){toast('无法保存预设：'+e.message);return;}
+    refreshPresets();$('#preset').value=key;toast('预设已保存');
+  });
   $('#btn-reset').addEventListener('click',()=>{$('#preset').value='character';state.params={...PRESETS.character};buildControls();scheduleRender();});
   $('#view-mode').addEventListener('click',e=>{
     const b=e.target.closest('button');if(!b)return;
@@ -780,8 +1175,8 @@ function bind(){
     state.zoom=b.dataset.z==='fit'?'fit':Number(b.dataset.z);
     $$('#zoom button').forEach(x=>x.classList.toggle('on',x===b));applyZoom();
   });
-  $('#chk-grid').addEventListener('change',e=>{state.grid=e.target.checked;});
-  $('#btn-export').addEventListener('click',doExport);
+  $('#chk-grid').addEventListener('change',e=>{state.grid=e.target.checked;applyZoom();});
+  $('#btn-export').addEventListener('click',()=>doExport().catch(e=>toast('导出失败：'+e.message)));
   $('#canvas-wrap').addEventListener('wheel',e=>{
     if(!state.outW)return;e.preventDefault();
     const levels=[1,2,4,8,16];const cur=state.zoom==='fit'?1:state.zoom;
@@ -802,20 +1197,38 @@ function bind(){
   // 批量导出
   $('#btn-batch').addEventListener('click',async()=>{
     if(state.files.length<=1){toast('请先选择多张图片');return;}
-    for(let i=0;i<state.files.length;i++){
-      await upload(state.files[i]);
-      await doExport();
-      toast(`批量 ${i+1}/${state.files.length}`);
-    }
+    const sc=askExportScale();if(sc===null)return;
+    const files=state.files.slice(),params={...state.params};
+    const prefix=`pixel_${Date.now()}`;
+    $('#btn-batch').disabled=true;
+    const panel=$('.panel');panel.inert=true;
+    state.batching=true;
+    try{
+      for(let i=0;i<files.length;i++){
+        state.params={...params};
+        if(!await upload(files[i]))throw new Error(`无法转换 ${files[i].name}`);
+        await exportCurrent(sc,`${prefix}_${String(i+1).padStart(3,'0')}`);
+        toast(`批量 ${i+1}/${files.length}`);
+      }
+    }catch(e){toast('批量导出失败：'+e.message);}
+    finally{state.batching=false;panel.inert=false;$('#btn-batch').disabled=false;}
   });
+  window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();if(!state.batching)doExport().catch(err=>toast(err.message));}});
 }
 
 /* 初始化 */
+let customPresets={};
+function refreshPresets(){
+  const select=$('#preset');select.querySelectorAll('[data-custom]').forEach(o=>o.remove());
+  for(const key of Object.keys(customPresets)){const o=document.createElement('option');o.value=key;o.textContent='★ '+key.slice(7);o.dataset.custom='true';select.appendChild(o);}
+}
 function init(){
+  try{const saved=JSON.parse(localStorage.getItem('pixceloe_standalone_presets')||'{}');if(saved&&typeof saved==='object'&&!Array.isArray(saved))customPresets=saved;}catch{}
+  refreshPresets();
   buildControls();
   bind();
-  tag($('#img-result'),'');
-  tag($('#img-original'),'');
+  tag($('#view-result'),'成品');
+  tag($('#view-original'),'原图');
 }
 init();
 </script>

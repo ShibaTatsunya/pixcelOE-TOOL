@@ -12,15 +12,15 @@ function $$(s) { return Array.from(document.querySelectorAll(s)); }
 /* ---------------- 预设 ---------------- */
 const PRESETS = {
   character: {
-    posterize_skip: false, desat: 'hsl', gamma: 1, brightness: 0, contrast: 0,
-    posterize_levels: 4, color_levels: 12, posterize_mode: 'ps',
+    posterize_skip: false, desat: 'hsl', brightness: 0, contrast: 0,
+    posterize_levels: 4, color_levels: 12, color_cleanup: 2, selective_mode: false, accent_rules: [], posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 4, downsample: 'bridge', dark_tol: 0.06,
     palette_kind: 'character', quantize_levels: 4, no_quantize: false, dither: 'none', dither_strength: 24,
   },
   scene: {
-    posterize_skip: false, desat: 'hsl', gamma: 1, brightness: 0, contrast: 0,
-    posterize_levels: 4, color_levels: 12, posterize_mode: 'ps',
+    posterize_skip: false, desat: 'hsl', brightness: 0, contrast: 0,
+    posterize_levels: 4, color_levels: 12, color_cleanup: 2, selective_mode: false, accent_rules: [], posterize_mode: 'ps',
     patch: 2, thickness: 1, keep_thin: false,
     factor: 2, downsample: 'bridge', dark_tol: 0.06,
     palette_kind: 'scene', quantize_levels: 0, no_quantize: false, dither: 'none', dither_strength: 24,
@@ -35,7 +35,6 @@ const GROUPS = [
     items: [
       { k: 'color_mode', t: 'bool', label: '保留彩色（不黑白化）', help: '勾选后跳过黑白化与灰阶分层，保留原图彩色，输出彩色像素图（强调色不再被抽走）。' },
       { k: 'desat', t: 'select', label: '黑白化算法', opts: [['hsl', 'HSL —— 和 PS 一致（推荐）'], ['rec709', 'Rec.709 —— 旧做法，脸会更暗']], help: '决定彩色图怎么变黑白。「HSL」跟 Photoshop 把饱和度拉到底的结果一致。' },
-      { k: 'gamma', t: 'range', label: '明暗曲线（Gamma）', min: -1, max: 1, step: 0.02, logbase: 3, help: '左边变暗、右边变亮，0 为中性（Gamma=1）。' },
       { k: 'brightness', t: 'range', label: '整体亮度', min: -150, max: 150, step: 1, help: '正数更亮、负数更暗，等价于 Photoshop 的「亮度」。' },
       { k: 'contrast', t: 'range', label: '整体对比度', min: -100, max: 100, step: 1, help: '调大 → 黑白更分明、细节更锐；调小 → 更柔和。默认 0（居中，中性）。' },
     ],
@@ -116,6 +115,7 @@ async function api(path, body) {
 
 /* ---------------- 参数面板 ---------------- */
 function buildControls() {
+  delete state.params.gamma;
   const host = $('#controls');
   host.innerHTML = '';
   for (const g of GROUPS) {
@@ -141,20 +141,24 @@ function buildControls() {
       { k: 'dither', t: 'select', label: '抖动（dither）', opts: [['none', '不抖动（默认）'], ['bayer4', '4×4 Bayer 有序抖动'], ['bayer8', '8×8 Bayer 有序抖动']], help: '在过渡处叠加规律纹理，模拟中间色阶（黑白/彩色都生效）。' },
       { k: 'dither_strength', t: 'range', label: '抖动强度', min: 0, max: 100, step: 1, help: '抖动偏移幅度，越大纹理越明显。' },
     ];
-    const items = (g.enableKey === 'enable_posterize')
+    let items = (g.enableKey === 'enable_posterize')
       ? (state.params.color_mode
-          ? [{ k: 'color_levels', t: 'range', label: '色彩层数（彩色明度档数）', min: 2, max: 12, step: 1, help: '色相不变，只把彩色像素的明度减少到 N 档，档数越少色阶越简练。' },
+          ? [{ k: 'color_levels', t: 'range', label: '色彩层数（彩色明度档数）', min: 2, max: 12, step: 1, help: '只调整明暗层次，色相跟随原图对应色块，避免分层产生异色色点。' },
              { k: 'posterize_levels', t: 'range', label: '灰阶层数（灰色明度档数）', min: 2, max: 8, step: 1, help: '图里黑白灰区域（低饱和）的明度档数，独立于彩色区域。' },
-             ...DITHER_ITEMS]
+             ]
           : [
               { k: 'posterize_levels', t: 'range', label: '灰阶层数', min: 0, max: 8, step: 1, help: '黑白灰像素的明度档数（原版语义）。0 = 不分层；4 层最常用。' },
               { k: 'posterize_mode', t: 'select', label: '分层方式', opts: [['ps', '和 Photoshop 一致（推荐）'], ['palette', '旧做法（按调色板范围）']], help: '「和 PS 一致」按 Photoshop 色调分离的原样分层，是验收通过的默认。' },
               ...DITHER_ITEMS,
             ])
       : g.items;
+    if (g.enableKey === 'enable_quantize' && state.params.color_mode) {
+      items = [{ k: 'color_cleanup', t: 'select', label: '边缘杂色清理', opts: [['0', '关闭'], ['1', '轻度（保留小装饰）'], ['2', '标准（边缘更干净）']], help: '清理邻域不支持的稀有色相；可能影响 1–2 像素小装饰，可关闭。' }, ...DITHER_ITEMS];
+    }
     for (const it of items) sec.appendChild(buildField(it));
     host.appendChild(sec);
   }
+  buildAccentControls(host);
 }
 
 function buildField(it) {
@@ -170,6 +174,7 @@ function buildField(it) {
     cb.type = 'checkbox';
     cb.checked = !!v;
     cb.addEventListener('change', () => {
+      if (it.k === 'color_mode' && cb.checked) state.params.selective_mode = false;
       setParam(it.k, cb.checked);
       if (it.k === 'color_mode') buildControls();   // ②组滑块随彩色/黑白切换
     });
@@ -289,6 +294,7 @@ function refreshHistButtons() {
 }
 
 function scheduleRender() {
+  webRenderRevision++;
   clearTimeout(state.timer);
   state.timer = setTimeout(renderNow, 260);
 }
@@ -296,6 +302,7 @@ function scheduleRender() {
 /* ---------------- 上传 ---------------- */
 async function upload(file) {
   if (!file) return;
+  webRenderRevision++;
   setBusy(true);
   try {
     const r = await fetch('/api/upload', {
@@ -322,11 +329,13 @@ async function upload(file) {
 }
 
 /* ---------------- 渲染 ---------------- */
+let webRenderRevision=0;
 async function renderNow() {
   if (!state.id) return;
+  const revision=++webRenderRevision;
   setBusy(true);
   try {
-    const body = { id: state.id, params: state.params };
+    const body = { id: state.id, params: JSON.parse(JSON.stringify(state.params)) };
     const r = await fetch('/api/render', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -337,6 +346,7 @@ async function renderNow() {
       throw new Error(j.error || 'HTTP ' + r.status);
     }
     const blob = await r.blob();
+    if(revision!==webRenderRevision)return;
     const img = $('#img-result');
     if (img.dataset.url) URL.revokeObjectURL(img.dataset.url);
     const url = URL.createObjectURL(blob);
@@ -351,8 +361,9 @@ async function renderNow() {
     $('#st-warn').textContent = '';
 
     applyView();
-    await refreshReport();
+    await refreshReport(body,revision);
   } catch (e) {
+    if(revision!==webRenderRevision)return;
     $('#st-warn').textContent = e.message;
     toast(e.message);
   } finally {
@@ -360,9 +371,10 @@ async function renderNow() {
   }
 }
 
-async function refreshReport() {
+async function refreshReport(body,revision) {
   try {
-    const j = await api('/api/report', { id: state.id, params: state.params });
+    const j = await api('/api/report', body);
+    if(revision!==webRenderRevision)return;
     renderReport(j);
     if (j.warned && j.warned.length) $('#st-warn').textContent = j.warned.join('；');
   } catch (e) {
@@ -386,6 +398,7 @@ function applyView() {
   views.className = 'views ' + state.view;
   $$('#view-mode button').forEach((b) => b.classList.toggle('on', b.dataset.v === state.view));
   applyZoom();
+  refreshAccentOverlay();
 }
 
 function applyZoom() {

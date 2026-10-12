@@ -129,6 +129,7 @@ select:focus,input[type=text]:focus{outline:none; border-color:var(--accent)}
 .view img{display:block; image-rendering:pixelated; image-rendering:crisp-edges;
   border-radius:3px; box-shadow:0 8px 26px rgba(0,0,0,.55)}
 .view .tag{
+  pointer-events:none;
   position:absolute; top:6px; left:6px; font-size:10.5px; padding:2px 7px; border-radius:5px;
   background:rgba(10,12,16,.82); color:var(--fg2); line-height:1.6;
 }

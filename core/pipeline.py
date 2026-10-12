@@ -21,8 +21,9 @@ import numpy as np
 
 from .algorithm import (DOWNSAMPLE_MODES, adjust_color, apply_dither, contrast_downsample,
                         desaturate_adjust, downsample_color, expand_only, nearest_palette,
-                        posterize_lum, quantize_color)
+                        posterize_lum, quantize_color, restore_color_hue, clean_color_speckles)
 from .palette import gray_rgb, load_palette, narrow_palette, posterize_steps
+from .selective import normalize_rules, apply_selective_color
 
 #: 单张上传图的最大像素数（防止把 8K 图丢进来把内存吃光）
 MAX_PIXELS = 40_000_000
@@ -48,7 +49,6 @@ class Params:
     # ---- 输入预处理 ----
     crop: list[int] | None = None      # [left, top, right, bottom]，None / 空 = 不裁
     desat: str = "hsl"                 # hsl | rec709
-    gamma: float = 1.0
     brightness: float = 0.0            # PS 亮度 -150..150
     contrast: float = 0.0              # PS 对比度 -50..100
 
@@ -56,6 +56,9 @@ class Params:
     posterize_skip: bool = False       # True = 输入已是分档灰图，跳过本步（仍量化）
     color_mode: bool = False           # True = 保留彩色（跳过去饱和+分档+灰阶量化）
     color_levels: int = 12             # 彩色模式：色相保留档数
+    color_cleanup: int = 2             # 0 off / 1 light / 2 standard; hue guide only
+    selective_mode: bool = False       # Gray artwork with user-chosen flat accents
+    accent_rules: list[dict] = field(default_factory=list)
     posterize_levels: int = 4          # 0 = 按调色板原样（彩色模式：明度档数）
     posterize_mode: str = "ps"         # ps | palette
 
@@ -93,13 +96,19 @@ class Params:
         self.patch = max(1, min(4, int(self.patch)))
         self.thickness = max(0, min(4, int(self.thickness)))
         self.posterize_levels = max(0, min(8, int(self.posterize_levels)))
+        if self.posterize_levels == 1:
+            self.posterize_levels = 2  # A single PS level divides by zero.
         self.color_levels = max(2, min(64, int(self.color_levels)))
+        self.color_cleanup = max(0, min(2, int(self.color_cleanup)))
+        self.accent_rules = normalize_rules(self.accent_rules)
+        if self.selective_mode:
+            self.color_mode = False
+            self.posterize_skip = False
         self.quantize_levels = max(0, min(8, int(self.quantize_levels)))
         self.downsample = self.downsample if self.downsample in DOWNSAMPLE_MODES else "bridge"
         self.desat = self.desat if self.desat in ("hsl", "rec709") else "hsl"
         self.posterize_mode = self.posterize_mode if self.posterize_mode in ("ps", "palette") else "ps"
         self.palette_kind = self.palette_kind if self.palette_kind in ("character", "scene") else "character"
-        self.gamma = float(max(0.2, min(3.0, self.gamma)))
         self.brightness = float(max(-150.0, min(150.0, self.brightness)))
         self.contrast = float(max(-100.0, min(100.0, self.contrast)))
         self.dark_tol = float(max(0.0, min(0.5, self.dark_tol)))
@@ -202,9 +211,9 @@ def convert(
     # ① 输入与明暗：去饱和 + 亮度/对比度 → 灰度 lum（float32）
     t0 = time.perf_counter()
     if params.color_mode:
-        # 彩色模式：不做去饱和，但明暗调整（gamma/brightness/contrast）照常生效，保持色相
+        # 彩色模式：不做去饱和，但亮度/对比度照常生效，保持色相
         if params.enable_input:
-            post = adjust_color(src, params.gamma, params.brightness, params.contrast)
+            post = adjust_color(src, 1.0, params.brightness, params.contrast)
         else:
             post = np.ascontiguousarray(src[:, :, :3])
         lum = post.astype(np.float32).mean(axis=2)
@@ -212,7 +221,7 @@ def convert(
         post = np.ascontiguousarray(src[:, :, :3])
         lum = src.astype(np.float32).mean(axis=2)
     elif params.enable_input:
-        lum = desaturate_adjust(src, params.desat, params.gamma, params.brightness, params.contrast)
+        lum = desaturate_adjust(src, params.desat, 1.0, params.brightness, params.contrast)
     else:
         # ①关闭：不做明暗调整，但仍做 HSL 去饱和。这样②分档始终拿到的是
         # 「去饱和后的灰度」，不依赖①的开关 —— 去饱和与分档解耦。
@@ -222,7 +231,7 @@ def convert(
     # ② 灰阶分几层：色调分离 → post（uint8）
     t0 = time.perf_counter()
     if params.color_mode:
-        # 彩色模式：色相量化（color_levels 档）+ 明度量化（posterize_levels 档），色彩不失真
+        # Only lightness is layered; hue/saturation follow the input color.
         if params.enable_posterize:
             post = quantize_color(post, params.color_levels, params.posterize_levels)
     elif not params.posterize_skip:
@@ -264,22 +273,26 @@ def convert(
     # ⑤ 颜色：抖动 + 调色板量化（color_mode 保留彩色；posterize_skip 输入灰图仍量化）
     t0 = time.perf_counter()
     if params.color_mode:
-        # 彩色：LAB 亮度量化 + 抖动（量化前叠加 Bayer，与黑白口径一致）
-        small = quantize_color(small, params.color_levels, params.posterize_levels,
-                               params.dither, params.dither_strength)
-        final = small
-    elif params.enable_quantize or params.posterize_skip:
+        # Hue guidance is sampled from the original, independently of level count.
+        if params.enable_quantize:
+            small = quantize_color(small, params.color_levels, params.posterize_levels,
+                                   params.dither, params.dither_strength)
+        guide = downsample_color(src, params.factor, params.downsample) if params.enable_downsample else src
+        if params.enable_quantize:
+            guide = clean_color_speckles(guide, params.color_cleanup)
+        final = restore_color_hue(small, guide)
+    elif params.enable_quantize:
         if params.dither != "none":
             small = apply_dither(small, params.dither, params.dither_strength)
         if params.no_quantize:
-            final = np.clip(small * 255.0, 0, 255).round().astype(np.uint8)
+            final = small.copy()  # Already uint8 RGB; multiplying by 255 clips to white.
         else:
             pal_rgb = narrow_palette(gray_rgb(pal, params.palette_kind), params.quantize_levels)
             final = nearest_palette(small, list(pal_rgb))
     else:
         # ⑤关闭：不量化到项目调色板，但收敛回②的分档值。否则③轮廓扩展的浮点运算
         # 会把②的分档抹平成上万种连续灰度，用户调②（灰阶分几层）就看不出效果了。
-        if params.enable_posterize:
+        if params.enable_posterize and not params.posterize_skip:
             steps = np.array(posterize_steps(params.posterize_levels, params.posterize_mode,
                                              gray_rgb(pal, params.palette_kind)), dtype=np.float32)
             lum = small.astype(np.float32).mean(axis=2)
@@ -288,6 +301,8 @@ def convert(
             final = np.dstack([g, g, g])
         else:
             final = small.copy()
+    if params.selective_mode:
+        final = apply_selective_color(final, src, params.factor, params.enable_downsample, params.accent_rules)
     timings["quantize"] = (time.perf_counter() - t0) * 1000
     timings["total"] = (time.perf_counter() - t_all) * 1000
 

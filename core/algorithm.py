@@ -355,36 +355,108 @@ def lab_to_rgb(lab: np.ndarray) -> np.ndarray:
 
 def quantize_color(arr: np.ndarray, color_value_levels: int = 4, gray_value_levels: int = 4,
                    dither: str = "none", dither_strength: float = 24.0) -> np.ndarray:
-    """LAB 亮度量化（色相不变）+ 可选抖动：LAB 空间分离亮度 L 与颜色 A/B。
+    """Quantize HSL lightness, preserving the input hue and saturation.
 
-    与竞品 PixelOE 一致的思路：亮度（L）与颜色（A/B）分开处理。
-    L（感知亮度）量化到 N 档——彩色像素（色度 sqrt(A²+B²) >= 5）用 ``color_value_levels``，
-    灰色像素用 ``gray_value_levels``；A/B 完全保留（色相不变）。可选：量化前给 L 叠加
-    Bayer 抖动。与黑白灰阶的「感知亮度」口径一致，因此彩色/黑白明度分层与抖动对齐。
-    返回 RGB uint8。
+    Reconstruct inside the RGB gamut instead of clipping fixed LAB A/B, which
+    changes hue at bright/dark layer boundaries. Bayer changes lightness only.
     """
-    lab = rgb_to_lab(arr)
-    L, A, B = lab[..., 0], lab[..., 1], lab[..., 2]
-    chroma = np.sqrt(A * A + B * B)
-
-    # 抖动：量化前给 L 叠加 Bayer 图案（与黑白 apply_dither 的偏移口径一致）
+    a = arr.astype(np.float32) / 255.0
+    hi, lo = a.max(axis=2), a.min(axis=2)
+    L = (hi + lo) * 0.5
+    delta = hi - lo
+    base = L.copy()
     if dither in BAYER:
         m = BAYER[dither]
         m = m / m.size - 0.5
         th, tw = m.shape
         hh, ww = L.shape
         tile = np.tile(m, (hh // th + 1, ww // tw + 1))[:hh, :ww]
-        L = np.clip(L + tile * (dither_strength / 255.0 * 100.0), 0.0, 100.0)
+        L = np.clip(L + tile * (dither_strength / 255.0), 0.0, 1.0)
 
     clv = max(2, int(color_value_levels))
     glv = max(2, int(gray_value_levels))
-    lv = np.where(chroma >= 5.0, clv, glv).astype(np.int32)
+    lv = np.where(delta > 8.0 / 255.0, clv, glv).astype(np.int32)
     Lq = np.zeros_like(L)
     for k in np.unique(lv):
         m = lv == k
-        Lq[m] = np.floor(L[m] / 100.0 * k + 0.5) / k * 100.0
-    Lq = np.clip(Lq, 0.0, 100.0)
-    return lab_to_rgb(np.stack([Lq, A, B], axis=2))
+        Lq[m] = np.floor(L[m].astype(np.float64) * k + 0.5) / k
+    Lq = np.clip(Lq, 0.0, 1.0)
+    return _with_lightness(a, base, Lq)
+
+
+def _with_lightness(reference: np.ndarray, base: np.ndarray, lightness: np.ndarray) -> np.ndarray:
+    span = np.minimum(base, 1.0 - base)
+    target_span = np.minimum(lightness, 1.0 - lightness)
+    scale = np.divide(target_span, span, out=np.zeros_like(span), where=span > 0)
+    rgb = (reference - base[:, :, None]) * scale[:, :, None] + lightness[:, :, None]
+    return (np.clip(rgb, 0.0, 1.0) * 255.0).round().astype(np.uint8)
+
+
+def restore_color_hue(arr: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Use source-position H/S and processed lightness; no hue from layer selection."""
+    a = reference.astype(np.float32) / 255.0
+    base = (a.max(axis=2) + a.min(axis=2)) * 0.5
+    target = arr.astype(np.float32) / 255.0
+    lightness = (target.max(axis=2) + target.min(axis=2)) * 0.5
+    out = _with_lightness(a, base, lightness)
+    # Almost-white RGB differences have unstable HSL saturation. Do not amplify
+    # those quantization/compression differences when darkening a white region.
+    neutral = reference.max(axis=2).astype(int)-reference.min(axis=2).astype(int) <= 8
+    out[neutral] = (lightness[neutral, None]*255).round().astype(np.uint8)
+    return out
+
+
+def clean_color_speckles(reference: np.ndarray, strength: int = 1) -> np.ndarray:
+    """Replace locally unsupported hues with a nearby supported hue (not RGB blur).
+
+    Light preserves a hue supported by one neighbor; standard requires five.
+    Only the hue guide changes, so output lightness and silhouette stay intact.
+    Small intentional isolated accents may also be removed; the UI can disable it.
+    """
+    if strength <= 0:
+        return reference
+    rgb = reference.astype(np.float64)
+    hi, lo = rgb.max(axis=2), rgb.min(axis=2)
+    delta = hi - lo
+    colored = delta > 8
+    safe = np.maximum(delta, 1)
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    hue = np.where(hi == r, (g-b)/safe, np.where(hi == g, 2+(b-r)/safe, 4+(r-g)/safe))
+    hue = (hue*60+360) % 360
+    h, w = colored.shape
+    padded_hue = np.pad(hue, 2)
+    padded_color = np.pad(colored, 2)
+    support = np.zeros((h, w), dtype=np.uint8)
+    for dy in range(5):
+        for dx in range(5):
+            if dy == 2 and dx == 2:
+                continue
+            other_hue = padded_hue[dy:dy+h, dx:dx+w]
+            other_color = padded_color[dy:dy+h, dx:dx+w]
+            d = np.abs(hue-other_hue)
+            support += other_color & (np.minimum(d, 360-d) <= 18)
+    out = reference.copy()
+    min_support = 1 if strength == 1 else 5
+    for y, x in zip(*np.nonzero(colored & (support < min_support))):
+        neighbors = [(yy, xx) for yy in range(max(0, y-2), min(h, y+3))
+                     for xx in range(max(0, x-2), min(w, x+3)) if (yy, xx) != (y, x)]
+        best = None
+        best_count, best_distance = 2, float('inf')
+        for yy, xx in neighbors:
+            count = 0
+            for cy, cx in neighbors:
+                if not colored[yy, xx]:
+                    same = not colored[cy, cx]
+                else:
+                    d = abs(hue[yy, xx]-hue[cy, cx])
+                    same = colored[cy, cx] and min(d, 360-d) <= 18
+                count += int(same)
+            distance = (yy-y)**2+(xx-x)**2
+            if count >= 3 and (count > best_count or (count == best_count and distance < best_distance)):
+                best, best_count, best_distance = (yy, xx), count, distance
+        if best is not None:
+            out[y, x] = reference[best]
+    return out
 
 
 def downsample_color(rgb: np.ndarray, factor: int, mode: str = "bridge") -> np.ndarray:
@@ -414,14 +486,16 @@ def downsample_color(rgb: np.ndarray, factor: int, mode: str = "bridge") -> np.n
     elif mode == "skew":
         idx = lum.argmax(axis=2)
     elif mode == "median":
-        idx = np.argsort(lum, axis=2)[..., N // 2]
+        # Preserve source order for equal luminance so Python and the offline
+        # browser choose the same representative color across NumPy versions.
+        idx = np.argsort(lum, axis=2, kind="stable")[..., N // 2]
     else:  # bridge：偏暗取最暗、偏亮取最亮、否则取中位
         lmin = lum.min(axis=2)
         lmax = lum.max(axis=2)
         lmed = np.median(lum, axis=2)
         idx_min = lum.argmin(axis=2)
         idx_max = lum.argmax(axis=2)
-        idx_med = np.argsort(lum, axis=2)[..., N // 2]
+        idx_med = np.argsort(lum, axis=2, kind="stable")[..., N // 2]
         skew = lmed - (lmin + lmax) / 2.0
         idx = np.where(skew < -8, idx_min, np.where(skew > 8, idx_max, idx_med))
 
