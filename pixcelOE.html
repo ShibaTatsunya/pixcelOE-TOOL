@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>pixcelOE · 图片转像素图（单文件版）</title>
+<title>pixcelOE 1.5.0-alpha.1 · 图片转像素图（单文件版）</title>
 <style>
 :root{--bg:#0c0e13;--panel:#14161c;--panel2:#1a1d25;--line:#232833;--fg:#e6e8ee;--fg2:#8a90a0;--accent:#7c6cff;--accent2:#a99bff}
 *{box-sizing:border-box}
@@ -70,7 +70,7 @@ select{width:100%;background:var(--panel2);color:var(--fg);border:1px solid var(
 <div class="layout">
   <aside class="panel">
     <div class="topbar">
-      <h1>pixcelOE</h1><span class="sub">单文件版</span>
+      <h1>pixcelOE</h1><span class="sub">1.5.0-alpha.1 · 单文件版</span>
       <div class="topbar-actions">
         <button id="btn-save-preset" class="btn ghost" title="把当前参数存为预设">保存预设</button>
         <button id="btn-reset" class="btn ghost" title="恢复默认参数">重置</button>
@@ -697,6 +697,7 @@ function convert(rgb,h,w,p){
 <script>
 
 /* ============================ 预设 / 参数 ============================ */
+const TOOL_VERSION='1.5.0-alpha.1';
 const PRESETS={
   character:{posterize_skip:false,color_mode:false,desat:'hsl',brightness:0,contrast:0,
     posterize_levels:4,color_levels:12,color_cleanup:2,selective_mode:false,accent_rules:[],posterize_mode:'ps',patch:2,thickness:1,keep_thin:false,
@@ -1128,7 +1129,7 @@ function askExportScale(){
 async function exportCurrent(sc,name){
   const cv=toCanvas(state.finalData,state.outW,state.outH);let output=cv;
   if(sc>1){output=document.createElement('canvas');output.width=state.outW*sc;output.height=state.outH*sc;const cx=output.getContext('2d');cx.imageSmoothingEnabled=false;cx.drawImage(cv,0,0,output.width,output.height);}
-  const metadata={params:{...state.params},input_size:[state.srcW,state.srcH],output_size:[state.outW,state.outH],scale:sc,validate:state.report};
+  const metadata={tool:`pixcelOE ${TOOL_VERSION}`,version:TOOL_VERSION,params:{...state.params},input_size:[state.srcW,state.srcH],output_size:[state.outW,state.outH],scale:sc,validate:state.report};
   await download(output,`${name}.png`);
   downloadBlob(new Blob([JSON.stringify(metadata,null,2)],{type:'application/json'}),`${name}.json`);
 }

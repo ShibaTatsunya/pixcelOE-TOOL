@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from server.api import run  # noqa: E402
+from core import __version__  # noqa: E402
 
 
 def pick_port(preferred: int) -> int:
@@ -36,6 +37,7 @@ def pick_port(preferred: int) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="pixcelOE —— 图片转像素图工具")
+    ap.add_argument("--version", action="version", version=f"pixcelOE {__version__}")
     ap.add_argument("--host", default="127.0.0.1", help="监听地址（默认只监听本机）")
     ap.add_argument("--port", type=int, default=8760, help="端口（默认 8760）")
     ap.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")

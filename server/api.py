@@ -32,6 +32,7 @@ from urllib.parse import urlparse, parse_qs
 import numpy as np
 from PIL import Image
 
+from core import __version__
 from core.palette import KINDS, gray_hex, gray_rgb, load_palette, rgb_to_hex
 from core.selective import accent_palette
 from core.algorithm import DOWNSAMPLE_HELP, DOWNSAMPLE_MODES
@@ -118,7 +119,7 @@ def _png_bytes(arr: np.ndarray, preview: int = 0) -> bytes:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "pixcelOE/1.0"
+    server_version = f"pixcelOE/{__version__}"
     protocol_version = "HTTP/1.1"
 
     # ---- 工具方法 ----
@@ -205,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
     def _meta(self) -> None:
         pal = APP.palette
         self._json({
+            "version": __version__,
             "downsample": [{"value": m, "help": DOWNSAMPLE_HELP.get(m, "")} for m in DOWNSAMPLE_MODES],
             "kinds": list(KINDS),
             "palette": {k: gray_hex(pal, k) for k in KINDS},
@@ -280,7 +282,8 @@ class Handler(BaseHTTPRequestHandler):
         scale = max(1, min(8, int(d.get("scale") or 1)))
         png.write_bytes(_png_bytes(res.final, scale))
         meta.write_text(json.dumps({
-            "tool": "pixcelOE 1.0",
+            "tool": f"pixcelOE {__version__}",
+            "version": __version__,
             "created": time.strftime("%Y-%m-%d %H:%M:%S"),
             "source_image": iid,
             "scale": scale,
@@ -296,7 +299,7 @@ def run(host: str = "127.0.0.1", port: int = 8760, quiet: bool = False) -> None:
     httpd = ThreadingHTTPServer((host, port), Handler)
     if not quiet:
         print("=" * 66)
-        print("  pixcelOE —— 图片转像素图工具")
+        print(f"  pixcelOE {__version__} —— 图片转像素图工具")
         print(f"  已启动：http://{host}:{port}")
         print("  关闭：在本窗口按 Ctrl+C")
         print("=" * 66)

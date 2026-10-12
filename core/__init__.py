@@ -7,3 +7,6 @@
     pipeline   把上面几步串成一次转换，并缓存可复用的中间结果
     validate   交付验收（复刻 validate_asset.py 的机械硬性检查）
 """
+from pathlib import Path
+
+__version__ = (Path(__file__).resolve().parent.parent / "VERSION").read_text(encoding="utf-8").strip()
