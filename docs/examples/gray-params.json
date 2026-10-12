@@ -1,0 +1,44 @@
+{
+  "version": "1.5.0-alpha.1",
+  "input_size": [
+    640,
+    960
+  ],
+  "output_size": [
+    160,
+    240
+  ],
+  "params": {
+    "preset": "character",
+    "enable_input": true,
+    "enable_posterize": true,
+    "enable_outline": true,
+    "enable_downsample": true,
+    "enable_quantize": true,
+    "crop": null,
+    "desat": "hsl",
+    "brightness": 0.0,
+    "contrast": 25.0,
+    "posterize_skip": false,
+    "color_mode": false,
+    "color_levels": 12,
+    "color_cleanup": 2,
+    "selective_mode": false,
+    "accent_rules": [],
+    "posterize_levels": 4,
+    "posterize_mode": "ps",
+    "patch": 2,
+    "thickness": 1,
+    "keep_thin": false,
+    "factor": 4,
+    "downsample": "bridge",
+    "dark_tol": 0.06,
+    "palette_kind": "character",
+    "quantize_levels": 4,
+    "no_quantize": false,
+    "dither": "none",
+    "dither_strength": 24.0,
+    "canvas": null
+  },
+  "preview_scale": 2
+}

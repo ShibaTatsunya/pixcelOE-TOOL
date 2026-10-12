@@ -1,0 +1,126 @@
+{
+  "version": "1.5.0-alpha.1",
+  "input_size": [
+    832,
+    1216
+  ],
+  "output_size": [
+    208,
+    304
+  ],
+  "params": {
+    "preset": "character",
+    "enable_input": true,
+    "enable_posterize": true,
+    "enable_outline": true,
+    "enable_downsample": true,
+    "enable_quantize": true,
+    "crop": null,
+    "desat": "hsl",
+    "brightness": 25.0,
+    "contrast": 0.0,
+    "posterize_skip": false,
+    "color_mode": false,
+    "color_levels": 12,
+    "color_cleanup": 2,
+    "selective_mode": true,
+    "accent_rules": [
+      {
+        "source": "#168ECC",
+        "target": "#35A7B4",
+        "region": [
+          0.36,
+          0.29,
+          0.64,
+          0.44
+        ],
+        "tolerance": 45.0,
+        "saturation": 35.0,
+        "dark_limit": 32,
+        "min_size": 4,
+        "paint_mask": null,
+        "enabled": true
+      },
+      {
+        "source": "#C5201E",
+        "target": "#A92F35",
+        "region": [
+          0.64,
+          0.36,
+          0.9,
+          0.96
+        ],
+        "tolerance": 16.0,
+        "saturation": 40.0,
+        "dark_limit": 32,
+        "min_size": 6,
+        "paint_mask": {
+          "strokes": [
+            {
+              "points": [
+                [
+                  0.675,
+                  0.385
+                ],
+                [
+                  0.69,
+                  0.46
+                ],
+                [
+                  0.695,
+                  0.54
+                ],
+                [
+                  0.704,
+                  0.63
+                ],
+                [
+                  0.71,
+                  0.67
+                ]
+              ],
+              "radius": 0.025,
+              "erase": false
+            },
+            {
+              "points": [
+                [
+                  0.756,
+                  0.85
+                ]
+              ],
+              "radius": 0.11,
+              "erase": false
+            },
+            {
+              "points": [
+                [
+                  0.762,
+                  0.725
+                ]
+              ],
+              "radius": 0.053,
+              "erase": true
+            }
+          ]
+        },
+        "enabled": true
+      }
+    ],
+    "posterize_levels": 4,
+    "posterize_mode": "ps",
+    "patch": 2,
+    "thickness": 1,
+    "keep_thin": false,
+    "factor": 4,
+    "downsample": "bridge",
+    "dark_tol": 0.06,
+    "palette_kind": "character",
+    "quantize_levels": 4,
+    "no_quantize": false,
+    "dither": "none",
+    "dither_strength": 24.0,
+    "canvas": null
+  },
+  "preview_scale": 2
+}
